@@ -145,7 +145,7 @@ export async function submitMeasurement(input: {
 
   const { data: device } = await supabase
     .from('devices')
-    .select('id, device_type_id')
+    .select('id, device_type_id, min_c, max_c')
     .eq('id', parsed.data.deviceId)
     .eq('tenant_id', session.tenantId)
     .eq('location_id', session.locationId)
@@ -168,8 +168,19 @@ export async function submitMeasurement(input: {
     .limit(1)
     .maybeSingle();
 
-  const minC = rule?.min_c != null ? Number(rule.min_c) : null;
-  const maxC = rule?.max_c != null ? Number(rule.max_c) : null;
+  // Limit zariadenia (nastavený adminom) má prednosť pred globálnym pravidlom.
+  const minC =
+    device.min_c != null
+      ? Number(device.min_c)
+      : rule?.min_c != null
+        ? Number(rule.min_c)
+        : null;
+  const maxC =
+    device.max_c != null
+      ? Number(device.max_c)
+      : rule?.max_c != null
+        ? Number(rule.max_c)
+        : null;
   const outOfRange =
     (minC != null && parsed.data.valueC < minC) ||
     (maxC != null && parsed.data.valueC > maxC);

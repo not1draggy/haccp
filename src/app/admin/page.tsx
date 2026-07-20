@@ -79,7 +79,7 @@ export default async function AdminDashboard() {
   const select =
     'id, value_c, status, measured_at, devices(name), memberships(display_name)';
 
-  const [{ data: alarms }, { data: today }] = await Promise.all([
+  const [{ data: alarms }, { data: today }, { data: deviceRows }] = await Promise.all([
     supabase
       .from('measurements')
       .select(select)
@@ -93,13 +93,73 @@ export default async function AdminDashboard() {
       .gte('measured_at', todayStart.toISOString())
       .order('measured_at', { ascending: false })
       .limit(200),
+    supabase
+      .from('devices')
+      .select('id, name')
+      .eq('active', true)
+      .order('sort_order'),
   ]);
 
   const alarmRows = (alarms ?? []) as unknown as MeasurementRow[];
   const todayRows = (today ?? []) as unknown as MeasurementRow[];
+  const devices = deviceRows ?? [];
+
+  // Stav per zariadenie: posledné dnešné meranie, alebo "dnes neodmerané".
+  const todayByDevice = new Map<string, MeasurementRow>();
+  for (const m of todayRows) {
+    const name = m.devices?.name;
+    if (name && !todayByDevice.has(name)) todayByDevice.set(name, m);
+  }
+  const measuredCount = devices.filter((d) => todayByDevice.has(d.name)).length;
 
   return (
     <div className="space-y-6">
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold">Dnes odmerať</h2>
+          <span className="rounded-full bg-frost px-3 py-1 text-sm font-semibold text-steel/70">
+            {measuredCount} / {devices.length}
+          </span>
+        </div>
+        {devices.length === 0 ? (
+          <p className="py-6 text-center text-sm text-steel/50">
+            Zatiaľ žiadne zariadenia — pridaj ich v sekcii Zariadenia.
+          </p>
+        ) : (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {devices.map((d) => {
+              const m = todayByDevice.get(d.name);
+              return (
+                <div
+                  key={d.id}
+                  className={`rounded-xl border p-4 ${
+                    !m
+                      ? 'border-warn/30 bg-warn/5'
+                      : m.status === 'alarm'
+                        ? 'border-danger/30 bg-danger/5'
+                        : 'border-ok/20 bg-ok/5'
+                  }`}
+                >
+                  <p className="font-semibold">{d.name}</p>
+                  {m ? (
+                    <p className="mt-1 text-sm">
+                      <span
+                        className={`font-bold ${m.status === 'alarm' ? 'text-danger' : 'text-ok'}`}
+                      >
+                        {Number(m.value_c).toLocaleString('sk-SK')} °C
+                      </span>{' '}
+                      <span className="text-steel/50">o {formatTime(m.measured_at)}</span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-sm font-semibold text-warn">dnes neodmerané</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold">Alarmy — posledných 7 dní</h2>

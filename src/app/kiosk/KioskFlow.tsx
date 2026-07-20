@@ -1,30 +1,53 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { submitMeasurement, verifyPin, type SubmitResult } from './actions';
 
 export type KioskEmployee = { id: string; display_name: string };
-export type KioskDevice = { id: string; name: string; type_name: string };
+export type KioskDevice = {
+  id: string;
+  name: string;
+  type_name: string;
+  minC: number | null;
+  maxC: number | null;
+  lastValue: number | null;
+  lastStatus: 'ok' | 'alarm' | null;
+  lastAt: string | null;
+  measuredToday: boolean;
+};
 
 type Step = 'employee' | 'pin' | 'device' | 'value' | 'result';
 
-const RESET_AFTER_MS = 5000;
+// Po uložení sa ide rovno na ďalšie zariadenie — PIN sa znovu NEPÝTA.
+// Session zamestnanca sa zamkne až po nečinnosti.
+const RESULT_AUTO_CONTINUE_MS = 2500;
+const IDLE_LOCK_MS = 5 * 60 * 1000;
 
-function Keypad({
-  onKey,
-  keys,
-}: {
-  onKey: (k: string) => void;
-  keys: string[];
-}) {
+function fmt(v: number | null) {
+  return v == null ? '—' : `${v.toLocaleString('sk-SK')} °C`;
+}
+
+function timeAgo(iso: string | null) {
+  if (!iso) return 'zatiaľ nemerané';
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return 'pred chvíľou';
+  if (min < 60) return `pred ${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `pred ${h} h`;
+  return `pred ${Math.round(h / 24)} d`;
+}
+
+function Keypad({ onKey, keys }: { onKey: (k: string) => void; keys: string[] }) {
   return (
     <div className="grid w-full max-w-sm grid-cols-3 gap-3">
-      {keys.map((k) => (
+      {keys.map((k, i) => (
         <button
-          key={k}
+          key={`${k}-${i}`}
           type="button"
-          onClick={() => onKey(k)}
-          className="rounded-2xl bg-steel py-5 text-2xl font-bold text-white active:bg-white/20"
+          onClick={() => k !== '' && onKey(k)}
+          className={`rounded-2xl py-5 text-2xl font-bold transition-colors duration-150 ${
+            k === '' ? 'invisible' : 'bg-steel text-white active:bg-white/25'
+          }`}
         >
           {k === 'back' ? '⌫' : k}
         </button>
@@ -46,13 +69,20 @@ export default function KioskFlow({
   const [employee, setEmployee] = useState<KioskEmployee | null>(null);
   const [pin, setPin] = useState('');
   const [device, setDevice] = useState<KioskDevice | null>(null);
-  const [value, setValue] = useState(''); // textová reprezentácia, napr. "-18.5"
+  const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Extract<SubmitResult, { ok: true }> | null>(null);
+  const [savedValue, setSavedValue] = useState<number | null>(null);
+  const [doneCount, setDoneCount] = useState(0);
   const [pending, startTransition] = useTransition();
+  const lastActivity = useRef(Date.now());
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function resetAll() {
+  const touch = useCallback(() => {
+    lastActivity.current = Date.now();
+  }, []);
+
+  const lockSession = useCallback(() => {
     if (resetTimer.current) clearTimeout(resetTimer.current);
     setStep('employee');
     setEmployee(null);
@@ -61,20 +91,45 @@ export default function KioskFlow({
     setValue('');
     setError(null);
     setResult(null);
-  }
+    setDoneCount(0);
+  }, []);
 
+  // Auto-zamknutie po nečinnosti — nikdy neprerušuje rozrobené meranie
+  // skôr než po IDLE_LOCK_MS.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (employee && Date.now() - lastActivity.current > IDLE_LOCK_MS) {
+        lockSession();
+      }
+    }, 10_000);
+    return () => clearInterval(iv);
+  }, [employee, lockSession]);
+
+  // Výsledok: krátke potvrdenie a automaticky ďalšie zariadenie.
   useEffect(() => {
     if (step === 'result') {
-      resetTimer.current = setTimeout(resetAll, RESET_AFTER_MS);
+      resetTimer.current = setTimeout(continueMeasuring, RESULT_AUTO_CONTINUE_MS);
       return () => {
         if (resetTimer.current) clearTimeout(resetTimer.current);
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  function continueMeasuring() {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    touch();
+    setDevice(null);
+    setValue('');
+    setResult(null);
+    setError(null);
+    setStep('device');
+  }
 
   function checkPin() {
     if (!employee) return;
     setError(null);
+    touch();
     startTransition(async () => {
       const res = await verifyPin({ membershipId: employee.id, pin });
       if (res.ok) {
@@ -94,6 +149,7 @@ export default function KioskFlow({
       return;
     }
     setError(null);
+    touch();
     startTransition(async () => {
       const res = await submitMeasurement({
         membershipId: employee.id,
@@ -102,7 +158,9 @@ export default function KioskFlow({
         valueC: parsed,
       });
       if (res.ok) {
+        setSavedValue(parsed);
         setResult(res);
+        setDoneCount((c) => c + 1);
         setStep('result');
       } else {
         setError(res.error);
@@ -111,11 +169,13 @@ export default function KioskFlow({
   }
 
   function pinKey(k: string) {
+    touch();
     if (k === 'back') setPin((p) => p.slice(0, -1));
     else if (pin.length < 8) setPin((p) => p + k);
   }
 
   function valueKey(k: string) {
+    touch();
     setError(null);
     if (k === 'back') {
       setValue((v) => v.slice(0, -1));
@@ -135,17 +195,29 @@ export default function KioskFlow({
   }
 
   const header = (
-    <header className="flex w-full items-center justify-between px-2">
-      <span className="text-sm text-white/40">{kioskName}</span>
-      {step !== 'employee' && (
+    <header className="flex w-full max-w-2xl items-center justify-between px-2">
+      <div className="flex items-baseline gap-3">
+        <span className="text-sm text-white/40">{kioskName}</span>
+        {employee && step !== 'pin' && (
+          <span className="text-sm font-semibold text-white/80">
+            {employee.display_name}
+            {doneCount > 0 && (
+              <span className="ml-2 rounded-full bg-ok/20 px-2 py-0.5 text-xs text-ok">
+                {doneCount} ✓
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      {employee ? (
         <button
           type="button"
-          onClick={resetAll}
-          className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white/70"
+          onClick={lockSession}
+          className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white/70 transition-colors duration-150 active:bg-white/20"
         >
-          Zrušiť
+          {step === 'pin' ? 'Zrušiť' : 'Odhlásiť'}
         </button>
-      )}
+      ) : null}
     </header>
   );
 
@@ -162,19 +234,21 @@ export default function KioskFlow({
                 key={e.id}
                 type="button"
                 onClick={() => {
+                  touch();
                   setEmployee(e);
                   setPin('');
                   setStep('pin');
                 }}
-                className="rounded-2xl bg-steel px-4 py-6 text-lg font-semibold active:bg-white/20"
+                className="rounded-2xl bg-steel px-4 py-6 text-lg font-semibold transition-colors duration-150 active:bg-white/25"
               >
                 {e.display_name}
               </button>
             ))}
             {employees.length === 0 && (
-              <p className="col-span-full text-center text-white/50">
-                Žiadni zamestnanci — pridaj ich v administrácii.
-              </p>
+              <div className="col-span-full rounded-2xl border border-dashed border-white/20 p-8 text-center text-white/50">
+                <p className="text-lg">Zatiaľ žiadni zamestnanci</p>
+                <p className="mt-1 text-sm">Pridaj ich v administrácii → Zamestnanci.</p>
+              </div>
             )}
           </div>
         </>
@@ -183,6 +257,7 @@ export default function KioskFlow({
       {step === 'pin' && employee && (
         <>
           <h1 className="text-2xl font-bold">{employee.display_name} — PIN</h1>
+          <p className="text-sm text-white/50">PIN zadávaš iba raz — potom meriaš bez prerušenia.</p>
           <div className="text-4xl tracking-[0.5em]">
             {pin.length === 0 ? (
               <span className="text-white/30">••••</span>
@@ -193,13 +268,13 @@ export default function KioskFlow({
           {error && <p className="text-danger">{error}</p>}
           <Keypad
             keys={['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0', '']}
-            onKey={(k) => k !== '' && pinKey(k)}
+            onKey={pinKey}
           />
           <button
             type="button"
             onClick={checkPin}
             disabled={pending || pin.length < 4}
-            className="w-full max-w-sm rounded-2xl bg-ok py-5 text-2xl font-bold disabled:opacity-40"
+            className="w-full max-w-sm rounded-2xl bg-ok py-5 text-2xl font-bold transition-opacity duration-150 disabled:opacity-40"
           >
             {pending ? 'Overujem…' : 'Ďalej'}
           </button>
@@ -209,26 +284,47 @@ export default function KioskFlow({
       {step === 'device' && (
         <>
           <h1 className="text-2xl font-bold">Ktoré zariadenie?</h1>
-          <div className="grid w-full max-w-2xl grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
             {devices.map((d) => (
               <button
                 key={d.id}
                 type="button"
                 onClick={() => {
+                  touch();
                   setDevice(d);
                   setValue('');
                   setStep('value');
                 }}
-                className="rounded-2xl bg-steel px-4 py-6 active:bg-white/20"
+                className="flex items-center justify-between rounded-2xl bg-steel px-5 py-5 text-left transition-colors duration-150 active:bg-white/25"
               >
-                <span className="block text-lg font-semibold">{d.name}</span>
-                <span className="block text-sm text-white/50">{d.type_name}</span>
+                <span>
+                  <span className="block text-lg font-semibold">{d.name}</span>
+                  <span className="block text-sm text-white/50">
+                    {d.type_name} · {timeAgo(d.lastAt)}
+                  </span>
+                </span>
+                <span className="text-right">
+                  {d.measuredToday ? (
+                    <span
+                      className={`block text-lg font-bold ${
+                        d.lastStatus === 'alarm' ? 'text-danger' : 'text-ok'
+                      }`}
+                    >
+                      {fmt(d.lastValue)}
+                    </span>
+                  ) : (
+                    <span className="block rounded-full bg-warn/20 px-2.5 py-1 text-xs font-semibold text-warn">
+                      dnes odmerať
+                    </span>
+                  )}
+                </span>
               </button>
             ))}
             {devices.length === 0 && (
-              <p className="col-span-full text-center text-white/50">
-                Žiadne zariadenia — pridaj ich v administrácii.
-              </p>
+              <div className="col-span-full rounded-2xl border border-dashed border-white/20 p-8 text-center text-white/50">
+                <p className="text-lg">Zatiaľ žiadne zariadenia</p>
+                <p className="mt-1 text-sm">Pridaj ich v administrácii → Zariadenia.</p>
+              </div>
             )}
           </div>
         </>
@@ -236,7 +332,16 @@ export default function KioskFlow({
 
       {step === 'value' && device && (
         <>
-          <h1 className="text-2xl font-bold">{device.name} — teplota</h1>
+          <h1 className="text-2xl font-bold">{device.name}</h1>
+          <p className="text-sm text-white/50">
+            Limit: {fmt(device.minC)} až {fmt(device.maxC)}
+            {device.lastValue != null && (
+              <>
+                {' '}
+                · minule {fmt(device.lastValue)}
+              </>
+            )}
+          </p>
           <div className="text-5xl font-bold">
             {value === '' ? <span className="text-white/30">0</span> : value.replace('.', ',')}
             <span className="ml-2 text-3xl text-white/50">°C</span>
@@ -250,7 +355,7 @@ export default function KioskFlow({
             <button
               type="button"
               onClick={() => valueKey('back')}
-              className="flex-1 rounded-2xl bg-steel py-5 text-2xl font-bold"
+              className="flex-1 rounded-2xl bg-steel py-5 text-2xl font-bold transition-colors duration-150 active:bg-white/25"
             >
               ⌫
             </button>
@@ -258,7 +363,7 @@ export default function KioskFlow({
               type="button"
               onClick={submit}
               disabled={pending || value === '' || value === '-'}
-              className="flex-[2] rounded-2xl bg-ok py-5 text-2xl font-bold disabled:opacity-40"
+              className="flex-[2] rounded-2xl bg-ok py-5 text-2xl font-bold transition-opacity duration-150 disabled:opacity-40"
             >
               {pending ? 'Ukladám…' : 'Uložiť'}
             </button>
@@ -266,25 +371,27 @@ export default function KioskFlow({
         </>
       )}
 
-      {step === 'result' && result && (
+      {step === 'result' && result && device && (
         <button
           type="button"
-          onClick={resetAll}
-          className={`flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 rounded-3xl ${
+          onClick={continueMeasuring}
+          className={`flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 rounded-3xl transition-colors duration-200 ${
             result.status === 'ok' ? 'bg-ok' : 'bg-danger'
           }`}
         >
           <span className="text-7xl">{result.status === 'ok' ? '✓' : '⚠'}</span>
           <span className="text-3xl font-bold">
+            {device.name}: {savedValue != null ? fmt(savedValue) : ''}
+          </span>
+          <span className="text-xl font-semibold">
             {result.status === 'ok' ? 'Zapísané — OK' : 'ALARM — mimo limitu!'}
           </span>
           {result.status === 'alarm' && (
             <span className="text-lg text-white/80">
-              Limit: {result.minC != null ? `${result.minC} °C` : '—'} až{' '}
-              {result.maxC != null ? `${result.maxC} °C` : '—'}. Informuj vedúceho.
+              Limit: {fmt(result.minC)} až {fmt(result.maxC)}. Informuj vedúceho.
             </span>
           )}
-          <span className="text-sm text-white/60">Ťukni pre ďalšie meranie</span>
+          <span className="text-sm text-white/70">Pokračujem na ďalšie zariadenie…</span>
         </button>
       )}
     </main>
