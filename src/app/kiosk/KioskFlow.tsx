@@ -37,6 +37,12 @@ function timeAgo(iso: string | null) {
   return `pred ${Math.round(h / 24)} d`;
 }
 
+const KEY_LABELS: Record<string, string> = {
+  back: 'Vymazať poslednú číslicu',
+  '±': 'Prepnúť znamienko',
+  ',': 'Desatinná čiarka',
+};
+
 function Keypad({ onKey, keys }: { onKey: (k: string) => void; keys: string[] }) {
   return (
     <div className="grid w-full max-w-sm grid-cols-3 gap-3">
@@ -45,6 +51,9 @@ function Keypad({ onKey, keys }: { onKey: (k: string) => void; keys: string[] })
           key={`${k}-${i}`}
           type="button"
           onClick={() => k !== '' && onKey(k)}
+          aria-hidden={k === ''}
+          tabIndex={k === '' ? -1 : undefined}
+          aria-label={KEY_LABELS[k] ?? k}
           className={`rounded-2xl py-5 text-2xl font-bold transition-colors duration-150 ${
             k === '' ? 'invisible' : 'bg-steel text-white active:bg-white/25'
           }`}
@@ -115,6 +124,39 @@ export default function KioskFlow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  // Fyzická klávesnica: niektoré tablety majú dok, a bez nej sa flow nedá
+  // ovládať jednou rukou pri manipulácii s teplomerom.
+  useEffect(() => {
+    if (step !== 'pin' && step !== 'value') return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      const handler = step === 'pin' ? pinKey : valueKey;
+
+      if (/^[0-9]$/.test(e.key)) {
+        handler(e.key);
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        handler('back');
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (step === 'pin') checkPin();
+        else submit();
+      } else if (e.key === 'Escape') {
+        lockSession();
+      } else if (step === 'value' && (e.key === ',' || e.key === '.')) {
+        e.preventDefault();
+        valueKey(',');
+      } else if (step === 'value' && e.key === '-') {
+        e.preventDefault();
+        valueKey('±');
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pin, value, employee, device]);
 
   function continueMeasuring() {
     if (resetTimer.current) clearTimeout(resetTimer.current);
@@ -265,7 +307,11 @@ export default function KioskFlow({
               '•'.repeat(pin.length)
             )}
           </div>
-          {error && <p className="text-danger">{error}</p>}
+          {error && (
+            <p role="alert" className="max-w-sm text-center text-danger">
+              {error}
+            </p>
+          )}
           <Keypad
             keys={['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0', '']}
             onKey={pinKey}
@@ -346,7 +392,11 @@ export default function KioskFlow({
             {value === '' ? <span className="text-white/30">0</span> : value.replace('.', ',')}
             <span className="ml-2 text-3xl text-white/50">°C</span>
           </div>
-          {error && <p className="text-danger">{error}</p>}
+          {error && (
+            <p role="alert" className="max-w-sm text-center text-danger">
+              {error}
+            </p>
+          )}
           <Keypad
             keys={['1', '2', '3', '4', '5', '6', '7', '8', '9', '±', '0', ',']}
             onKey={valueKey}
@@ -375,11 +425,15 @@ export default function KioskFlow({
         <button
           type="button"
           onClick={continueMeasuring}
+          role="status"
+          aria-live="assertive"
           className={`flex w-full max-w-md flex-1 flex-col items-center justify-center gap-4 rounded-3xl transition-colors duration-200 ${
             result.status === 'ok' ? 'bg-ok' : 'bg-danger'
           }`}
         >
-          <span className="text-7xl">{result.status === 'ok' ? '✓' : '⚠'}</span>
+          <span aria-hidden="true" className="text-7xl">
+            {result.status === 'ok' ? '✓' : '⚠'}
+          </span>
           <span className="text-3xl font-bold">
             {device.name}: {savedValue != null ? fmt(savedValue) : ''}
           </span>
