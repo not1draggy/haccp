@@ -41,7 +41,7 @@ export async function createDevice(formData: FormData) {
   if (!parsed.success) back('/admin/devices', 'Vyplň názov a typ zariadenia.');
 
   const { supabase, tenantId, locationId } = await getScope();
-  if (!tenantId || !locationId) back('/admin/devices', 'Chýba tenant — skontroluj JWT hook.');
+  if (!tenantId || !locationId) back('/admin/devices', 'Účet nemá priradenú prevádzku.');
 
   const { error } = await supabase.from('devices').insert({
     tenant_id: tenantId,
@@ -105,7 +105,7 @@ export async function createEmployee(formData: FormData) {
   if (!parsed.success) back('/admin/employees', 'Zadaj meno a PIN (4–8 číslic).');
 
   const { supabase, tenantId } = await getScope();
-  if (!tenantId) back('/admin/employees', 'Chýba tenant — skontroluj JWT hook.');
+  if (!tenantId) back('/admin/employees', 'Účet nemá priradenú prevádzku.');
 
   const { error } = await supabase.from('memberships').insert({
     tenant_id: tenantId,
@@ -200,7 +200,7 @@ export async function createKiosk(formData: FormData) {
   if (!name.success) back('/admin/kiosks', 'Zadaj názov kiosku.');
 
   const { supabase, tenantId, locationId } = await getScope();
-  if (!tenantId || !locationId) back('/admin/kiosks', 'Chýba tenant — skontroluj JWT hook.');
+  if (!tenantId || !locationId) back('/admin/kiosks', 'Účet nemá priradenú prevádzku.');
 
   const { error } = await supabase.from('kiosk_devices').insert({
     tenant_id: tenantId,
