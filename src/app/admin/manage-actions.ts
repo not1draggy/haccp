@@ -151,6 +151,39 @@ export async function toggleEmployee(formData: FormData) {
   back('/admin/employees');
 }
 
+// ------------------------------------------------- Nápravné opatrenia
+
+const correctiveSchema = z.object({
+  measurementId: z.string().uuid(),
+  action: z.string().trim().min(1).max(2000),
+});
+
+export async function addCorrectiveAction(formData: FormData) {
+  const parsed = correctiveSchema.safeParse({
+    measurementId: formData.get('measurementId'),
+    action: formData.get('action'),
+  });
+  if (!parsed.success) back('/admin', 'Popíš vykonané opatrenie.');
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin', 'Účet nemá priradenú prevádzku.');
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { error } = await supabase.from('corrective_actions').insert({
+    tenant_id: tenantId,
+    measurement_id: parsed.data.measurementId,
+    author_user_id: user?.id ?? null,
+    action: parsed.data.action,
+  });
+  if (error) back('/admin', 'Uloženie opatrenia zlyhalo.');
+
+  revalidatePath('/admin');
+  back('/admin');
+}
+
 // ------------------------------------------------------------------ Kiosky
 
 function generatePairingCode(): string {

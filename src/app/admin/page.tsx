@@ -1,15 +1,23 @@
 import { createClient } from '@/lib/supabase/server';
+import { addCorrectiveAction } from './manage-actions';
 
 export const dynamic = 'force-dynamic';
 
+type CorrectiveAction = { id: string; action: string; created_at: string };
+
 type MeasurementRow = {
   id: string;
+  device_id: string;
   value_c: number;
   status: 'ok' | 'alarm';
   measured_at: string;
   devices: { name: string } | null;
   memberships: { display_name: string } | null;
+  corrective_actions: CorrectiveAction[] | null;
 };
+
+const SELECT =
+  'id, device_id, value_c, status, measured_at, devices(name), memberships(display_name), corrective_actions(id, action, created_at)';
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('sk-SK', {
@@ -19,6 +27,10 @@ function formatTime(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function isoDate(d: Date) {
+  return d.toISOString().slice(0, 10);
 }
 
 function StatusBadge({ status }: { status: 'ok' | 'alarm' }) {
@@ -69,51 +81,108 @@ function MeasurementTable({ rows, empty }: { rows: MeasurementRow[]; empty: stri
   );
 }
 
-export default async function AdminDashboard() {
+/** Alarm bez zaznamenaného opatrenia je pri kontrole problém — preto je
+ *  formulár priamo pri alarme, nie schovaný v detaile. */
+function AlarmCard({ m }: { m: MeasurementRow }) {
+  const actions = m.corrective_actions ?? [];
+  return (
+    <div className="rounded-xl border border-danger/20 bg-danger/5 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-semibold">
+          {m.devices?.name ?? '—'}{' '}
+          <span className="font-bold text-danger">
+            {Number(m.value_c).toLocaleString('sk-SK')} °C
+          </span>
+        </p>
+        <p className="text-sm text-steel/50">
+          {formatTime(m.measured_at)} · {m.memberships?.display_name ?? '—'}
+        </p>
+      </div>
+
+      {actions.length > 0 ? (
+        <ul className="mt-3 space-y-1">
+          {actions.map((a) => (
+            <li key={a.id} className="text-sm text-steel/80">
+              <span className="text-steel/50">{formatTime(a.created_at)}:</span> {a.action}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm font-semibold text-warn">
+          Zatiaľ bez nápravného opatrenia
+        </p>
+      )}
+
+      <form action={addCorrectiveAction} className="mt-3 flex flex-wrap gap-2">
+        <input type="hidden" name="measurementId" value={m.id} />
+        <input
+          name="action"
+          required
+          maxLength={2000}
+          placeholder="Čo sa urobilo (napr. tovar presunutý, privolaný servis)"
+          className="min-w-48 flex-1 rounded-lg border border-steel/20 bg-white px-3 py-2 text-sm focus:border-steel focus:outline-none"
+        />
+        <button
+          type="submit"
+          className="rounded-lg bg-steel px-4 py-2 text-sm font-semibold text-white transition-colors duration-150 hover:bg-ink"
+        >
+          Zaznamenať
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default async function AdminDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ msg?: string }>;
+}) {
+  const { msg } = await searchParams;
   const supabase = await createClient();
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const select =
-    'id, value_c, status, measured_at, devices(name), memberships(display_name)';
-
   const [{ data: alarms }, { data: today }, { data: deviceRows }] = await Promise.all([
     supabase
       .from('measurements')
-      .select(select)
+      .select(SELECT)
       .eq('status', 'alarm')
       .gte('measured_at', sevenDaysAgo)
       .order('measured_at', { ascending: false })
       .limit(50),
     supabase
       .from('measurements')
-      .select(select)
+      .select(SELECT)
       .gte('measured_at', todayStart.toISOString())
       .order('measured_at', { ascending: false })
       .limit(200),
-    supabase
-      .from('devices')
-      .select('id, name')
-      .eq('active', true)
-      .order('sort_order'),
+    supabase.from('devices').select('id, name').eq('active', true).order('sort_order'),
   ]);
 
   const alarmRows = (alarms ?? []) as unknown as MeasurementRow[];
   const todayRows = (today ?? []) as unknown as MeasurementRow[];
   const devices = deviceRows ?? [];
 
-  // Stav per zariadenie: posledné dnešné meranie, alebo "dnes neodmerané".
+  // Párovanie podľa device_id — názvy zariadení nie sú unikátne.
   const todayByDevice = new Map<string, MeasurementRow>();
   for (const m of todayRows) {
-    const name = m.devices?.name;
-    if (name && !todayByDevice.has(name)) todayByDevice.set(name, m);
+    if (!todayByDevice.has(m.device_id)) todayByDevice.set(m.device_id, m);
   }
-  const measuredCount = devices.filter((d) => todayByDevice.has(d.name)).length;
+  const measuredCount = devices.filter((d) => todayByDevice.has(d.id)).length;
+
+  const unresolvedAlarms = alarmRows.filter(
+    (m) => (m.corrective_actions ?? []).length === 0,
+  ).length;
+
+  const monthAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
 
   return (
     <div className="space-y-6">
+      {msg && <p className="rounded-lg bg-warn/10 px-4 py-2 text-sm text-warn">{msg}</p>}
+
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold">Dnes odmerať</h2>
@@ -128,7 +197,7 @@ export default async function AdminDashboard() {
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {devices.map((d) => {
-              const m = todayByDevice.get(d.name);
+              const m = todayByDevice.get(d.id);
               return (
                 <div
                   key={d.id}
@@ -161,21 +230,32 @@ export default async function AdminDashboard() {
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold">Alarmy — posledných 7 dní</h2>
-          <span
-            className={`rounded-full px-3 py-1 text-sm font-semibold ${
-              alarmRows.length > 0
-                ? 'bg-danger/10 text-danger'
-                : 'bg-ok/10 text-ok'
-            }`}
-          >
-            {alarmRows.length}
-          </span>
+          <div className="flex items-center gap-2">
+            {unresolvedAlarms > 0 && (
+              <span className="rounded-full bg-warn/10 px-3 py-1 text-sm font-semibold text-warn">
+                {unresolvedAlarms} bez opatrenia
+              </span>
+            )}
+            <span
+              className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                alarmRows.length > 0 ? 'bg-danger/10 text-danger' : 'bg-ok/10 text-ok'
+              }`}
+            >
+              {alarmRows.length}
+            </span>
+          </div>
         </div>
-        <div className="mt-4">
-          <MeasurementTable rows={alarmRows} empty="Žiadne alarmy. 👍" />
-        </div>
+        {alarmRows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-steel/50">Žiadne alarmy. 👍</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {alarmRows.map((m) => (
+              <AlarmCard key={m.id} m={m} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
@@ -183,6 +263,43 @@ export default async function AdminDashboard() {
         <div className="mt-4">
           <MeasurementTable rows={todayRows} empty="Dnes zatiaľ žiadne merania." />
         </div>
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-bold">Export pre kontrolu</h2>
+        <p className="mt-1 text-sm text-steel/60">
+          CSV so všetkými meraniami a nápravnými opatreniami za zvolené obdobie.
+        </p>
+        <form
+          action="/admin/export"
+          method="get"
+          className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"
+        >
+          <label className="text-sm font-medium">
+            Od
+            <input
+              type="date"
+              name="from"
+              defaultValue={isoDate(monthAgo)}
+              className="mt-1 w-full rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
+            />
+          </label>
+          <label className="text-sm font-medium">
+            Do
+            <input
+              type="date"
+              name="to"
+              defaultValue={isoDate(new Date())}
+              className="mt-1 w-full rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
+            />
+          </label>
+          <button
+            type="submit"
+            className="self-end rounded-lg bg-steel px-5 py-2 font-semibold text-white transition-colors duration-150 hover:bg-ink"
+          >
+            Stiahnuť CSV
+          </button>
+        </form>
       </section>
     </div>
   );

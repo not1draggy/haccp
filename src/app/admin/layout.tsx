@@ -29,8 +29,10 @@ export default async function AdminLayout({
     .select('name')
     .maybeSingle();
 
-  // Bez tenanta = JWT claims hook nie je aktivovaný alebo chýba membership.
-  const tenantName = tenant?.name ?? '⚠ chýba tenant (skontroluj JWT hook)';
+  // Tenant sa rieši dvojstupňovo (JWT claim → fallback lookup membership),
+  // takže prázdny výsledok znamená, že účet nemá aktívne členstvo v žiadnom
+  // tenantovi — nie zlyhanie JWT hooku.
+  const tenantName = tenant?.name ?? '⚠ účet nemá priradenú prevádzku';
 
   return (
     <div className="min-h-screen">
