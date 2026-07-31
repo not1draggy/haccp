@@ -59,12 +59,37 @@ const pinSchema = z.object({
   pin: z.string().regex(/^\d{4,8}$/),
 });
 
+type PinCheck =
+  | { ok: true; member: { id: string; display_name: string } }
+  | { ok: false; error: string };
+
+function lockoutMessage(seconds: number): string {
+  const minutes = Math.ceil(seconds / 60);
+  return `Príliš veľa nesprávnych pokusov. Skús o ${minutes} min alebo požiadaj vedúceho o nový PIN.`;
+}
+
+/**
+ * Overí PIN a zároveň udržiava limit pokusov. 4-miestny PIN má len 10 000
+ * kombinácií, takže bez obmedzenia je uhádnuteľný hrubou silou. Limit je
+ * v DB, pretože serverless inštancie nezdieľajú pamäť.
+ */
 async function verifyEmployeePin(
   tenantId: string,
+  kioskId: string,
   membershipId: string,
   pin: string,
-) {
+): Promise<PinCheck> {
   const supabase = createServiceClient();
+
+  const { data: locked } = await supabase.rpc('pin_locked_seconds', {
+    p_membership: membershipId,
+    p_kiosk: kioskId,
+  });
+
+  if (typeof locked === 'number' && locked > 0) {
+    return { ok: false, error: lockoutMessage(locked) };
+  }
+
   const { data: member } = await supabase
     .from('memberships')
     .select('id, display_name, pin_hash')
@@ -74,9 +99,20 @@ async function verifyEmployeePin(
     .eq('active', true)
     .maybeSingle();
 
-  if (!member?.pin_hash) return null;
-  const valid = await bcrypt.compare(pin, member.pin_hash);
-  return valid ? member : null;
+  const valid = member?.pin_hash ? await bcrypt.compare(pin, member.pin_hash) : false;
+
+  await supabase.rpc('pin_record_attempt', {
+    p_tenant: tenantId,
+    p_membership: membershipId,
+    p_kiosk: kioskId,
+    p_success: valid,
+  });
+
+  if (!valid || !member) {
+    return { ok: false, error: 'Nesprávny PIN.' };
+  }
+
+  return { ok: true, member: { id: member.id, display_name: member.display_name } };
 }
 
 export async function verifyPin(input: { membershipId: string; pin: string }) {
@@ -90,15 +126,14 @@ export async function verifyPin(input: { membershipId: string; pin: string }) {
     return { ok: false as const, error: 'Kiosk nie je spárovaný.' };
   }
 
-  const member = await verifyEmployeePin(
+  const check = await verifyEmployeePin(
     session.tenantId,
+    session.kioskId,
     parsed.data.membershipId,
     parsed.data.pin,
   );
-  if (!member) {
-    return { ok: false as const, error: 'Nesprávny PIN.' };
-  }
-  return { ok: true as const };
+
+  return check.ok ? { ok: true as const } : { ok: false as const, error: check.error };
 }
 
 const measurementSchema = pinSchema.extend({
@@ -132,13 +167,14 @@ export async function submitMeasurement(input: {
   }
 
   // PIN sa overuje aj pri zápise — autorizácia sa nespolieha na klientsky stav.
-  const member = await verifyEmployeePin(
+  const check = await verifyEmployeePin(
     session.tenantId,
+    session.kioskId,
     parsed.data.membershipId,
     parsed.data.pin,
   );
-  if (!member) {
-    return { ok: false, error: 'Nesprávny PIN.' };
+  if (!check.ok) {
+    return { ok: false, error: check.error };
   }
 
   const supabase = createServiceClient();
@@ -190,7 +226,7 @@ export async function submitMeasurement(input: {
     tenant_id: session.tenantId,
     location_id: session.locationId,
     device_id: device.id,
-    membership_id: member.id,
+    membership_id: check.member.id,
     kiosk_device_id: session.kioskId,
     rule_id: rule?.id ?? null,
     value_c: parsed.data.valueC,

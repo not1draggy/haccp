@@ -132,8 +132,12 @@ export async function resetEmployeePin(formData: FormData) {
     .eq('role', 'employee');
   if (error) back('/admin/employees', 'Uloženie zlyhalo.');
 
+  // Nový PIN musí účet zároveň odomknúť, inak by zamestnanec čakal na
+  // vypršanie okna aj napriek zmene.
+  await supabase.rpc('pin_clear_attempts', { p_membership: id.data });
+
   revalidatePath('/admin/employees');
-  back('/admin/employees', 'PIN zmenený.');
+  back('/admin/employees', 'PIN zmenený a účet odomknutý.');
 }
 
 export async function toggleEmployee(formData: FormData) {

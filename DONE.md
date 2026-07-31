@@ -2,7 +2,18 @@
 
 Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 
-## Sprint: MVP dokončenie
+## Sprint: bezpečnosť a overiteľnosť
+
+- [x] Rate limiting na overovanie PIN (5 pokusov / 15 min per zamestnanec,
+      20 per kiosk, klzavé okno) — overené v DB testom všetkých hraníc
+- [x] Reset PIN adminom zároveň odomkne zablokovaný účet
+- [x] Automatizovaný test izolácie tenantov (`supabase/tests/`) — overené
+      reálnym dotazom cez rolu `authenticated`, nie čítaním policies
+- [x] Prístupnosť kiosku: `role="alert"` na chybách, `aria-live` na výsledku
+      merania, popisy kláves, ovládanie fyzickou klávesnicou
+- [x] Merge PR #1 do `main`
+
+## Predchádzajúci sprint: MVP dokončenie
 
 - [x] Oprava kritickej závislosti na JWT hooku (dvojstupňová resolúcia tenanta)
 - [x] Zúženie RPC plochy (trigger funkcie nedostupné cez PostgREST)
@@ -11,6 +22,7 @@ Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 - [x] Nápravné opatrenia k alarmom
 - [x] Oprava párovania meraní podľa `device_id` namiesto názvu
 - [x] Globálny error boundary
+- [x] Odstránenie duplicitnej kópie projektu (`haccpcomplete/`)
 
 ## Hotové v predchádzajúcich iteráciách
 

@@ -2,6 +2,36 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — 2026-07-31
+
+### Bezpečnosť
+
+- **Rate limiting na overovanie PIN** (migrácia `0008`). 4-miestny PIN má
+  10 000 kombinácií a doteraz sa dal skúšať donekonečna. Nové hranice:
+  5 neúspechov / 15 min na zamestnanca a 20 / 15 min na kiosk (druhá bráni
+  prechádzaniu všetkých zamestnancov na jednom tablete). Okno je klzavé,
+  takže sa účet sám odomkne — kuchár nečaká na admina. Úspešné zadanie
+  sériu vynuluje. Počítadlo je v DB, pretože serverless inštancie nezdieľajú
+  pamäť. Overené testom všetkých hraníc (4 pokusy prejdú, 5. zamkne na
+  900 s, úspech vynuluje).
+- Reset PIN adminom účet zároveň odomkne — inak by zamestnanec čakal na
+  vypršanie okna aj s novým PIN-om.
+- `pin_attempts` je zámerne bez audit triggera; pokusy o PIN by inak
+  zaplavili `audit_log`. Tabuľka je neprístupná pre `anon` aj
+  `authenticated` (RLS bez policy), zapisuje len service role.
+
+### Pridané
+
+- **Automatizovaný test izolácie tenantov**
+  (`supabase/tests/rls_isolation_test.sql`). Overuje reálnym dotazom cez
+  rolu `authenticated`, že admin jednej prevádzky nevidí zariadenia,
+  zamestnancov ani prevádzky inej, a že neznámy používateľ nedostane nič.
+  Beží v transakcii ukončenej ROLLBACKom — overené, že v DB ani v
+  `audit_log` nezostane žiadny testovací záznam.
+- **Prístupnosť kiosku**: výsledok merania sa ohlasuje cez `aria-live`,
+  chyby cez `role="alert"`, klávesy majú popisy a celý flow sa dá ovládať
+  fyzickou klávesnicou (číslice, Backspace, Enter, Escape, `-` a `,`).
+
 ## [0.3.0] — 2026-07-20
 
 ### Opravené
