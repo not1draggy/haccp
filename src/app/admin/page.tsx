@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 import { addCorrectiveAction } from './manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -153,7 +153,8 @@ export default async function AdminDashboard({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locationId, locationName } = await getAdminScope();
+  const loc = locationId ?? '';
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const todayStart = new Date();
@@ -169,6 +170,7 @@ export default async function AdminDashboard({
     supabase
       .from('measurements')
       .select(SELECT)
+      .eq('location_id', loc)
       .eq('status', 'alarm')
       .gte('measured_at', sevenDaysAgo)
       .order('measured_at', { ascending: false })
@@ -176,19 +178,27 @@ export default async function AdminDashboard({
     supabase
       .from('measurements')
       .select(SELECT)
+      .eq('location_id', loc)
       .gte('measured_at', todayStart.toISOString())
       .order('measured_at', { ascending: false })
       .limit(200),
-    supabase.from('devices').select('id, name').eq('active', true).order('sort_order'),
+    supabase
+      .from('devices')
+      .select('id, name')
+      .eq('active', true)
+      .eq('location_id', loc)
+      .order('sort_order'),
     supabase
       .from('missed_checks')
       .select('id, due_at, devices(name)')
+      .eq('location_id', loc)
       .gte('due_at', sevenDaysAgo)
       .order('due_at', { ascending: false })
       .limit(50),
     supabase
       .from('check_skips')
       .select('id, reason, skipped_at, devices(name), memberships(display_name)')
+      .eq('location_id', loc)
       .gte('skipped_at', sevenDaysAgo)
       .order('skipped_at', { ascending: false })
       .limit(50),
@@ -228,7 +238,12 @@ export default async function AdminDashboard({
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">Dnes odmerať</h2>
+          <h2 className="text-lg font-bold">
+            Dnes odmerať
+            {locationName && (
+              <span className="ml-2 text-sm font-normal text-steel/50">{locationName}</span>
+            )}
+          </h2>
           <span className="rounded-full bg-frost px-3 py-1 text-sm font-semibold text-steel/70">
             {measuredCount} / {devices.length}
           </span>

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +36,7 @@ function formatDateTime(iso: string) {
 }
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
+  const { supabase, locationId } = await getAdminScope();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -65,6 +65,7 @@ export async function GET(request: Request) {
     .select(
       'measured_at, value_c, status, devices(name), memberships(display_name), corrective_actions(action, created_at)',
     )
+    .eq('location_id', locationId ?? '')
     .gte('measured_at', from.toISOString())
     .lte('measured_at', to.toISOString())
     .order('measured_at', { ascending: false })

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 import { createKiosk, toggleKiosk, unpairKiosk } from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -9,11 +9,12 @@ export default async function KiosksPage({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locationId } = await getAdminScope();
 
   const { data: rows } = await supabase
     .from('kiosk_devices')
     .select('id, name, pairing_code, paired_at, last_seen_at, active')
+    .eq('location_id', locationId ?? '')
     .order('created_at');
 
   const kiosks = rows ?? [];

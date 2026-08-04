@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 import {
   createDevice,
   createDeviceType,
@@ -29,13 +29,14 @@ export default async function DevicesPage({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locationId } = await getAdminScope();
   const todayIso = new Date().toISOString().slice(0, 10);
 
   const [{ data: deviceRows }, { data: typeRows }, { data: ruleRows }] = await Promise.all([
     supabase
       .from('devices')
       .select('id, name, active, min_c, max_c, device_type_id, device_types(name)')
+      .eq('location_id', locationId ?? '')
       .order('sort_order'),
     supabase.from('device_types').select('id, name, code').order('name'),
     supabase

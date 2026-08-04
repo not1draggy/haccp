@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 import { createSchedule, toggleSchedule } from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -18,18 +18,26 @@ export default async function SchedulesPage({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locationId } = await getAdminScope();
 
-  const [{ data: scheduleRows }, { data: deviceRows }] = await Promise.all([
-    supabase
-      .from('schedules')
-      .select('id, due_time, tolerance_min, active, device_id, devices(name)')
-      .order('due_time'),
-    supabase.from('devices').select('id, name').eq('active', true).order('sort_order'),
-  ]);
+  const { data: deviceRows } = await supabase
+    .from('devices')
+    .select('id, name')
+    .eq('active', true)
+    .eq('location_id', locationId ?? '')
+    .order('sort_order');
+
+  const devices = deviceRows ?? [];
+
+  // schedules nemá location_id — obmedzíme cez zariadenia zvolenej prevádzky,
+  // inak by sa medzi rozvrhmi ukázali aj cudzie prevádzky.
+  const { data: scheduleRows } = await supabase
+    .from('schedules')
+    .select('id, due_time, tolerance_min, active, device_id, devices(name)')
+    .in('device_id', devices.length > 0 ? devices.map((d) => d.id) : ['00000000-0000-0000-0000-000000000000'])
+    .order('due_time');
 
   const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];
-  const devices = deviceRows ?? [];
 
   return (
     <div className="space-y-6">

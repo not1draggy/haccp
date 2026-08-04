@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +36,7 @@ export default async function HistoryPage({
   const page = Math.max(1, Number(params.page ?? '1') || 1);
   const from = (page - 1) * PAGE_SIZE;
 
-  const supabase = await createClient();
+  const { supabase, locationId } = await getAdminScope();
 
   let query = supabase
     .from('measurements')
@@ -44,6 +44,7 @@ export default async function HistoryPage({
       'id, value_c, status, measured_at, client_measured_at, note, devices(name), memberships(display_name)',
       { count: 'exact' },
     )
+    .eq('location_id', locationId ?? '')
     .order('measured_at', { ascending: false })
     .range(from, from + PAGE_SIZE - 1);
 
@@ -52,7 +53,11 @@ export default async function HistoryPage({
 
   const [{ data, count }, { data: deviceRows }] = await Promise.all([
     query,
-    supabase.from('devices').select('id, name').order('sort_order'),
+    supabase
+      .from('devices')
+      .select('id, name')
+      .eq('location_id', locationId ?? '')
+      .order('sort_order'),
   ]);
 
   const rows = (data ?? []) as unknown as HistoryRow[];
