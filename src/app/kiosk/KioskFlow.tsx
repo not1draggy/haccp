@@ -1,7 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
-import { submitMeasurement, verifyPin, type SubmitResult } from './actions';
+import {
+  dequeue,
+  enqueue,
+  listQueue,
+  queueSize,
+  queueSupported,
+  type QueuedMeasurement,
+} from '@/lib/kiosk/offline-queue';
+import { skipCheck, submitMeasurement, verifyPin, type SubmitResult } from './actions';
 
 export type KioskEmployee = { id: string; display_name: string };
 export type KioskDevice = {
@@ -11,12 +19,14 @@ export type KioskDevice = {
   minC: number | null;
   maxC: number | null;
   lastValue: number | null;
+  prevValue: number | null;
   lastStatus: 'ok' | 'alarm' | null;
   lastAt: string | null;
   measuredToday: boolean;
+  dueToday: boolean;
 };
 
-type Step = 'employee' | 'pin' | 'device' | 'value' | 'result';
+type Step = 'employee' | 'pin' | 'device' | 'value' | 'note' | 'skip' | 'result';
 
 // Po uložení sa ide rovno na ďalšie zariadenie — PIN sa znovu NEPÝTA.
 // Session zamestnanca sa zamkne až po nečinnosti.
@@ -35,6 +45,14 @@ function timeAgo(iso: string | null) {
   const h = Math.round(min / 60);
   if (h < 24) return `pred ${h} h`;
   return `pred ${Math.round(h / 24)} d`;
+}
+
+/** Šípka oproti predošlej hodnote — operátor tak zbadá plazivé otepľovanie. */
+function trendArrow(last: number | null, prev: number | null): string | null {
+  if (last == null || prev == null) return null;
+  const diff = last - prev;
+  if (Math.abs(diff) < 0.5) return '→';
+  return diff > 0 ? '↑' : '↓';
 }
 
 const KEY_LABELS: Record<string, string> = {
@@ -79,29 +97,101 @@ export default function KioskFlow({
   const [pin, setPin] = useState('');
   const [device, setDevice] = useState<KioskDevice | null>(null);
   const [value, setValue] = useState('');
+  const [note, setNote] = useState('');
+  const [skipReason, setSkipReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Extract<SubmitResult, { ok: true }> | null>(null);
   const [savedValue, setSavedValue] = useState<number | null>(null);
+  const [savedOffline, setSavedOffline] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [flushing, setFlushing] = useState(false);
   const [pending, startTransition] = useTransition();
   const lastActivity = useRef(Date.now());
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // PIN drží len pamäť — do IndexedDB sa zámerne neukladá.
+  const pinRef = useRef('');
 
   const touch = useCallback(() => {
     lastActivity.current = Date.now();
   }, []);
 
+  const refreshPending = useCallback(async () => {
+    if (!queueSupported()) return;
+    try {
+      setPendingCount(await queueSize());
+    } catch {
+      // Fronta je len poistka; jej zlyhanie nesmie zhodiť meranie.
+    }
+  }, []);
+
   const lockSession = useCallback(() => {
     if (resetTimer.current) clearTimeout(resetTimer.current);
+    pinRef.current = '';
     setStep('employee');
     setEmployee(null);
     setPin('');
     setDevice(null);
     setValue('');
+    setNote('');
+    setSkipReason('');
     setError(null);
     setResult(null);
     setDoneCount(0);
   }, []);
+
+  /**
+   * Odošle merania nazbierané počas výpadku. Vyžaduje PIN v pamäti —
+   * po obnovení stránky ho treba zadať znova (fronta ho neukladá).
+   */
+  const flushQueue = useCallback(async () => {
+    if (!queueSupported() || flushing || !pinRef.current) return;
+    let items: QueuedMeasurement[] = [];
+    try {
+      items = await listQueue();
+    } catch {
+      return;
+    }
+    if (items.length === 0) return;
+
+    setFlushing(true);
+    try {
+      for (const item of items) {
+        try {
+          const res = await submitMeasurement({
+            membershipId: item.membershipId,
+            pin: pinRef.current,
+            deviceId: item.deviceId,
+            valueC: item.valueC,
+            note: item.note ?? undefined,
+            clientUuid: item.id,
+            clientMeasuredAt: item.capturedAt,
+          });
+          // Duplikát znamená, že server záznam už má — tiež ho z fronty
+          // odstraňujeme, inak by tam viazol navždy.
+          if (res.ok) {
+            await dequeue(item.id);
+          } else {
+            break; // zlá autorizácia alebo zamknutie — nemá zmysel pokračovať
+          }
+        } catch {
+          break; // stále offline
+        }
+      }
+    } finally {
+      setFlushing(false);
+      await refreshPending();
+    }
+  }, [flushing, refreshPending]);
+
+  useEffect(() => {
+    void refreshPending();
+    function onOnline() {
+      void flushQueue();
+    }
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [flushQueue, refreshPending]);
 
   // Auto-zamknutie po nečinnosti — nikdy neprerušuje rozrobené meranie
   // skôr než po IDLE_LOCK_MS.
@@ -163,7 +253,10 @@ export default function KioskFlow({
     touch();
     setDevice(null);
     setValue('');
+    setNote('');
+    setSkipReason('');
     setResult(null);
+    setSavedOffline(false);
     setError(null);
     setStep('device');
   }
@@ -175,7 +268,9 @@ export default function KioskFlow({
     startTransition(async () => {
       const res = await verifyPin({ membershipId: employee.id, pin });
       if (res.ok) {
+        pinRef.current = pin;
         setStep('device');
+        void flushQueue();
       } else {
         setError(res.error);
         setPin('');
@@ -192,20 +287,89 @@ export default function KioskFlow({
     }
     setError(null);
     touch();
+
+    const clientUuid = crypto.randomUUID();
+    const capturedAt = new Date().toISOString();
+
     startTransition(async () => {
-      const res = await submitMeasurement({
-        membershipId: employee.id,
-        pin,
-        deviceId: device.id,
-        valueC: parsed,
-      });
-      if (res.ok) {
-        setSavedValue(parsed);
-        setResult(res);
-        setDoneCount((c) => c + 1);
-        setStep('result');
-      } else {
-        setError(res.error);
+      try {
+        const res = await submitMeasurement({
+          membershipId: employee.id,
+          pin: pinRef.current || pin,
+          deviceId: device.id,
+          valueC: parsed,
+          note: note.trim() || undefined,
+          clientUuid,
+          clientMeasuredAt: capturedAt,
+        });
+        if (res.ok) {
+          setSavedValue(parsed);
+          setSavedOffline(false);
+          setResult(res);
+          setDoneCount((c) => c + 1);
+          setStep('result');
+        } else {
+          setError(res.error);
+        }
+      } catch {
+        // Výpadok siete — meranie sa nesmie stratiť.
+        if (!queueSupported()) {
+          setError('Bez pripojenia a toto zariadenie nevie ukladať offline.');
+          return;
+        }
+        try {
+          await enqueue({
+            id: clientUuid,
+            membershipId: employee.id,
+            deviceId: device.id,
+            deviceName: device.name,
+            valueC: parsed,
+            note: note.trim() || null,
+            capturedAt,
+          });
+          await refreshPending();
+          setSavedValue(parsed);
+          setSavedOffline(true);
+          // Limit vieme aj offline (server ho poslal pri načítaní zoznamu),
+          // takže operátor hneď vidí, či má konať.
+          const out =
+            (device.minC != null && parsed < device.minC) ||
+            (device.maxC != null && parsed > device.maxC);
+          setResult({
+            ok: true,
+            status: out ? 'alarm' : 'ok',
+            minC: device.minC,
+            maxC: device.maxC,
+          });
+          setDoneCount((c) => c + 1);
+          setStep('result');
+        } catch {
+          setError('Meranie sa nepodarilo uložiť. Skús znova.');
+        }
+      }
+    });
+  }
+
+  function confirmSkip() {
+    if (!employee || !device) return;
+    if (skipReason.trim().length === 0) {
+      setError('Uveď dôvod.');
+      return;
+    }
+    setError(null);
+    touch();
+    startTransition(async () => {
+      try {
+        const res = await skipCheck({
+          membershipId: employee.id,
+          pin: pinRef.current || pin,
+          deviceId: device.id,
+          reason: skipReason.trim(),
+        });
+        if (res.ok) continueMeasuring();
+        else setError(res.error);
+      } catch {
+        setError('Bez pripojenia sa preskočenie nedá zapísať.');
       }
     });
   }
@@ -263,9 +427,24 @@ export default function KioskFlow({
     </header>
   );
 
+  const queueBanner =
+    pendingCount > 0 ? (
+      <p
+        role="status"
+        className="w-full max-w-2xl rounded-xl bg-warn/15 px-4 py-2 text-center text-sm text-warn"
+      >
+        {flushing
+          ? `Odosielam ${pendingCount} uložených meraní…`
+          : pinRef.current
+            ? `${pendingCount} meraní čaká na odoslanie.`
+            : `${pendingCount} meraní čaká na odoslanie — prihlás sa PIN-om.`}
+      </p>
+    ) : null;
+
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 bg-ink p-4 pt-6 text-white">
       {header}
+      {queueBanner}
 
       {step === 'employee' && (
         <>
@@ -300,7 +479,7 @@ export default function KioskFlow({
         <>
           <h1 className="text-2xl font-bold">{employee.display_name} — PIN</h1>
           <p className="text-sm text-white/50">PIN zadávaš iba raz — potom meriaš bez prerušenia.</p>
-          <div className="text-4xl tracking-[0.5em]">
+          <div className="text-4xl tracking-[0.5em]" aria-label={`Zadaných ${pin.length} číslic`}>
             {pin.length === 0 ? (
               <span className="text-white/30">••••</span>
             ) : (
@@ -331,41 +510,50 @@ export default function KioskFlow({
         <>
           <h1 className="text-2xl font-bold">Ktoré zariadenie?</h1>
           <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
-            {devices.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => {
-                  touch();
-                  setDevice(d);
-                  setValue('');
-                  setStep('value');
-                }}
-                className="flex items-center justify-between rounded-2xl bg-steel px-5 py-5 text-left transition-colors duration-150 active:bg-white/25"
-              >
-                <span>
-                  <span className="block text-lg font-semibold">{d.name}</span>
-                  <span className="block text-sm text-white/50">
-                    {d.type_name} · {timeAgo(d.lastAt)}
+            {devices.map((d) => {
+              const trend = trendArrow(d.lastValue, d.prevValue);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    touch();
+                    setDevice(d);
+                    setValue('');
+                    setNote('');
+                    setStep('value');
+                  }}
+                  className="flex items-center justify-between rounded-2xl bg-steel px-5 py-5 text-left transition-colors duration-150 active:bg-white/25"
+                >
+                  <span>
+                    <span className="block text-lg font-semibold">{d.name}</span>
+                    <span className="block text-sm text-white/50">
+                      {d.type_name} · {timeAgo(d.lastAt)}
+                    </span>
                   </span>
-                </span>
-                <span className="text-right">
-                  {d.measuredToday ? (
-                    <span
-                      className={`block text-lg font-bold ${
-                        d.lastStatus === 'alarm' ? 'text-danger' : 'text-ok'
-                      }`}
-                    >
-                      {fmt(d.lastValue)}
-                    </span>
-                  ) : (
-                    <span className="block rounded-full bg-warn/20 px-2.5 py-1 text-xs font-semibold text-warn">
-                      dnes odmerať
-                    </span>
-                  )}
-                </span>
-              </button>
-            ))}
+                  <span className="text-right">
+                    {d.measuredToday ? (
+                      <span
+                        className={`block text-lg font-bold ${
+                          d.lastStatus === 'alarm' ? 'text-danger' : 'text-ok'
+                        }`}
+                      >
+                        {fmt(d.lastValue)}
+                        {trend && (
+                          <span className="ml-1 text-white/50" aria-hidden="true">
+                            {trend}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="block rounded-full bg-warn/20 px-2.5 py-1 text-xs font-semibold text-warn">
+                        {d.dueToday ? 'dnes odmerať' : 'neodmerané'}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
             {devices.length === 0 && (
               <div className="col-span-full rounded-2xl border border-dashed border-white/20 p-8 text-center text-white/50">
                 <p className="text-lg">Zatiaľ žiadne zariadenia</p>
@@ -381,14 +569,9 @@ export default function KioskFlow({
           <h1 className="text-2xl font-bold">{device.name}</h1>
           <p className="text-sm text-white/50">
             Limit: {fmt(device.minC)} až {fmt(device.maxC)}
-            {device.lastValue != null && (
-              <>
-                {' '}
-                · minule {fmt(device.lastValue)}
-              </>
-            )}
+            {device.lastValue != null && <> · minule {fmt(device.lastValue)}</>}
           </p>
-          <div className="text-5xl font-bold">
+          <div className="text-5xl font-bold" aria-live="polite">
             {value === '' ? <span className="text-white/30">0</span> : value.replace('.', ',')}
             <span className="ml-2 text-3xl text-white/50">°C</span>
           </div>
@@ -405,6 +588,7 @@ export default function KioskFlow({
             <button
               type="button"
               onClick={() => valueKey('back')}
+              aria-label="Vymazať poslednú číslicu"
               className="flex-1 rounded-2xl bg-steel py-5 text-2xl font-bold transition-colors duration-150 active:bg-white/25"
             >
               ⌫
@@ -416,6 +600,119 @@ export default function KioskFlow({
               className="flex-[2] rounded-2xl bg-ok py-5 text-2xl font-bold transition-opacity duration-150 disabled:opacity-40"
             >
               {pending ? 'Ukladám…' : 'Uložiť'}
+            </button>
+          </div>
+          <div className="flex w-full max-w-sm gap-3 text-sm">
+            <button
+              type="button"
+              onClick={() => {
+                touch();
+                setStep('note');
+              }}
+              className="flex-1 rounded-xl bg-white/10 py-3 text-white/70 transition-colors duration-150 active:bg-white/20"
+            >
+              {note.trim() ? 'Poznámka ✓' : 'Pridať poznámku'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                touch();
+                setSkipReason('');
+                setStep('skip');
+              }}
+              className="flex-1 rounded-xl bg-white/10 py-3 text-white/70 transition-colors duration-150 active:bg-white/20"
+            >
+              Nedá sa odmerať
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 'note' && device && (
+        <>
+          <h1 className="text-2xl font-bold">Poznámka</h1>
+          <p className="text-sm text-white/50">{device.name}</p>
+          <textarea
+            value={note}
+            onChange={(e) => {
+              touch();
+              setNote(e.target.value);
+            }}
+            maxLength={500}
+            autoFocus
+            aria-label="Poznámka k meraniu"
+            placeholder="Napr. dvere boli otvorené počas dodávky"
+            className="min-h-32 w-full max-w-sm rounded-2xl bg-steel p-4 text-lg text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/40"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              touch();
+              setStep('value');
+            }}
+            className="w-full max-w-sm rounded-2xl bg-ok py-5 text-2xl font-bold"
+          >
+            Hotovo
+          </button>
+        </>
+      )}
+
+      {step === 'skip' && device && (
+        <>
+          <h1 className="text-2xl font-bold">Prečo sa nedá odmerať?</h1>
+          <p className="text-sm text-white/50">{device.name}</p>
+          <div className="grid w-full max-w-sm gap-2">
+            {['Zariadenie je vypnuté', 'Prevádzka zatvorená', 'Porucha teplomera'].map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => {
+                  touch();
+                  setSkipReason(r);
+                }}
+                className={`rounded-xl px-4 py-3 text-left transition-colors duration-150 ${
+                  skipReason === r ? 'bg-ok font-semibold' : 'bg-steel active:bg-white/25'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={skipReason}
+            onChange={(e) => {
+              touch();
+              setSkipReason(e.target.value);
+            }}
+            maxLength={500}
+            aria-label="Dôvod preskočenia"
+            placeholder="alebo napíš vlastný dôvod"
+            className="min-h-24 w-full max-w-sm rounded-2xl bg-steel p-4 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/40"
+          />
+          {error && (
+            <p role="alert" className="max-w-sm text-center text-danger">
+              {error}
+            </p>
+          )}
+          <div className="flex w-full max-w-sm gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                touch();
+                setError(null);
+                setStep('value');
+              }}
+              className="flex-1 rounded-2xl bg-steel py-4 font-semibold"
+            >
+              Späť
+            </button>
+            <button
+              type="button"
+              onClick={confirmSkip}
+              disabled={pending || skipReason.trim().length === 0}
+              className="flex-[2] rounded-2xl bg-warn py-4 text-lg font-bold disabled:opacity-40"
+            >
+              {pending ? 'Zapisujem…' : 'Zapísať dôvod'}
             </button>
           </div>
         </>
@@ -443,6 +740,11 @@ export default function KioskFlow({
           {result.status === 'alarm' && (
             <span className="text-lg text-white/80">
               Limit: {fmt(result.minC)} až {fmt(result.maxC)}. Informuj vedúceho.
+            </span>
+          )}
+          {savedOffline && (
+            <span className="rounded-full bg-black/20 px-3 py-1 text-sm">
+              Bez pripojenia — uložené v tablete, odošle sa samo
             </span>
           )}
           <span className="text-sm text-white/70">Pokračujem na ďalšie zariadenie…</span>

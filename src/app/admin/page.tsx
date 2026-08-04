@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { getAdminScope } from '@/lib/admin/scope';
 import { addCorrectiveAction } from './manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -14,6 +14,20 @@ type MeasurementRow = {
   devices: { name: string } | null;
   memberships: { display_name: string } | null;
   corrective_actions: CorrectiveAction[] | null;
+};
+
+type MissedRow = {
+  id: string;
+  due_at: string;
+  devices: { name: string } | null;
+};
+
+type SkipRow = {
+  id: string;
+  reason: string;
+  skipped_at: string;
+  devices: { name: string } | null;
+  memberships: { display_name: string } | null;
 };
 
 const SELECT =
@@ -139,16 +153,24 @@ export default async function AdminDashboard({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locationId, locationName } = await getAdminScope();
+  const loc = locationId ?? '';
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [{ data: alarms }, { data: today }, { data: deviceRows }] = await Promise.all([
+  const [
+    { data: alarms },
+    { data: today },
+    { data: deviceRows },
+    { data: missedRows },
+    { data: skipRows },
+  ] = await Promise.all([
     supabase
       .from('measurements')
       .select(SELECT)
+      .eq('location_id', loc)
       .eq('status', 'alarm')
       .gte('measured_at', sevenDaysAgo)
       .order('measured_at', { ascending: false })
@@ -156,10 +178,30 @@ export default async function AdminDashboard({
     supabase
       .from('measurements')
       .select(SELECT)
+      .eq('location_id', loc)
       .gte('measured_at', todayStart.toISOString())
       .order('measured_at', { ascending: false })
       .limit(200),
-    supabase.from('devices').select('id, name').eq('active', true).order('sort_order'),
+    supabase
+      .from('devices')
+      .select('id, name')
+      .eq('active', true)
+      .eq('location_id', loc)
+      .order('sort_order'),
+    supabase
+      .from('missed_checks')
+      .select('id, due_at, devices(name)')
+      .eq('location_id', loc)
+      .gte('due_at', sevenDaysAgo)
+      .order('due_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('check_skips')
+      .select('id, reason, skipped_at, devices(name), memberships(display_name)')
+      .eq('location_id', loc)
+      .gte('skipped_at', sevenDaysAgo)
+      .order('skipped_at', { ascending: false })
+      .limit(50),
   ]);
 
   const alarmRows = (alarms ?? []) as unknown as MeasurementRow[];
@@ -177,6 +219,17 @@ export default async function AdminDashboard({
     (m) => (m.corrective_actions ?? []).length === 0,
   ).length;
 
+  const missed = (missedRows ?? []) as unknown as MissedRow[];
+  const skips = (skipRows ?? []) as unknown as SkipRow[];
+
+  // Bez rozvrhu sa zmeškanie nedá zistiť — prázdny zoznam by inak vyzeral
+  // ako "všetko v poriadku", čo je nebezpečne zavádzajúce.
+  const { count: scheduleCount } = await supabase
+    .from('schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('active', true);
+  const hasSchedules = (scheduleCount ?? 0) > 0;
+
   const monthAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
 
   return (
@@ -185,7 +238,12 @@ export default async function AdminDashboard({
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">Dnes odmerať</h2>
+          <h2 className="text-lg font-bold">
+            Dnes odmerať
+            {locationName && (
+              <span className="ml-2 text-sm font-normal text-steel/50">{locationName}</span>
+            )}
+          </h2>
           <span className="rounded-full bg-frost px-3 py-1 text-sm font-semibold text-steel/70">
             {measuredCount} / {devices.length}
           </span>
@@ -255,6 +313,56 @@ export default async function AdminDashboard({
               <AlarmCard key={m.id} m={m} />
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">Zmeškané kontroly — 7 dní</h2>
+          <span
+            className={`rounded-full px-3 py-1 text-sm font-semibold ${
+              missed.length > 0 ? 'bg-warn/10 text-warn' : 'bg-ok/10 text-ok'
+            }`}
+          >
+            {missed.length}
+          </span>
+        </div>
+        {missed.length === 0 ? (
+          <p className="py-6 text-center text-sm text-steel/50">
+            {hasSchedules
+              ? 'Žiadne zmeškané kontroly. 👍'
+              : 'Zatiaľ nemáš rozvrhy — bez nich systém nevie, že sa na zariadenie zabudlo. Nastav ich v sekcii Rozvrhy.'}
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-steel/5">
+            {missed.map((m) => (
+              <li key={m.id} className="py-2 text-sm">
+                <span className="font-semibold">{m.devices?.name ?? '—'}</span>{' '}
+                <span className="text-steel/60">
+                  nebola odmeraná do {formatTime(m.due_at)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {skips.length > 0 && (
+          <>
+            <h3 className="mt-6 text-sm font-bold uppercase text-steel/50">
+              Vedome preskočené
+            </h3>
+            <ul className="mt-2 divide-y divide-steel/5">
+              {skips.map((s) => (
+                <li key={s.id} className="py-2 text-sm">
+                  <span className="font-semibold">{s.devices?.name ?? '—'}</span>{' '}
+                  <span className="text-steel/60">
+                    — {s.reason} ({s.memberships?.display_name ?? '—'},{' '}
+                    {formatTime(s.skipped_at)})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
