@@ -139,6 +139,11 @@ export async function verifyPin(input: { membershipId: string; pin: string }) {
 const measurementSchema = pinSchema.extend({
   deviceId: z.string().uuid(),
   valueC: z.number().min(-99).max(300),
+  note: z.string().trim().max(500).optional(),
+  /** Kľúč offline fronty — bráni duplicite pri opakovanom odoslaní. */
+  clientUuid: z.string().uuid().optional(),
+  /** Čas podľa tabletu; autoritatívny zostáva čas servera. */
+  clientMeasuredAt: z.string().datetime().optional(),
 });
 
 export type SubmitResult =
@@ -147,6 +152,8 @@ export type SubmitResult =
       status: 'ok' | 'alarm';
       minC: number | null;
       maxC: number | null;
+      /** true = server už tento záznam mal (opakované odoslanie z fronty). */
+      duplicate?: boolean;
     }
   | { ok: false; error: string };
 
@@ -155,6 +162,9 @@ export async function submitMeasurement(input: {
   pin: string;
   deviceId: string;
   valueC: number;
+  note?: string;
+  clientUuid?: string;
+  clientMeasuredAt?: string;
 }): Promise<SubmitResult> {
   const parsed = measurementSchema.safeParse(input);
   if (!parsed.success) {
@@ -231,9 +241,18 @@ export async function submitMeasurement(input: {
     rule_id: rule?.id ?? null,
     value_c: parsed.data.valueC,
     status,
+    note: parsed.data.note || null,
+    client_uuid: parsed.data.clientUuid ?? null,
+    client_measured_at: parsed.data.clientMeasuredAt ?? null,
   });
 
   if (error) {
+    // 23505 = tento client_uuid už je zapísaný. Nastane, keď offline fronta
+    // odošle meranie druhýkrát (napr. odpoveď sa stratila). Meranie v DB je,
+    // takže je to úspech — nie chyba, ktorú by mal operátor riešiť.
+    if (error.code === '23505') {
+      return { ok: true, status, minC, maxC, duplicate: true };
+    }
     return { ok: false, error: 'Zápis merania zlyhal, skús znova.' };
   }
 
@@ -243,4 +262,71 @@ export async function submitMeasurement(input: {
     .eq('id', session.kioskId);
 
   return { ok: true, status, minC, maxC };
+}
+
+const skipSchema = pinSchema.extend({
+  deviceId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500),
+});
+
+/**
+ * Preskočenie kontroly s dôvodom. Chýbajúci riadok v denníku vyzerá pri
+ * kontrole ako nedbalosť; "prevádzka bola zatvorená" je legitímne vysvetlenie,
+ * ktoré má byť súčasťou záznamu. Zámerne to NIE je meranie so status='skipped'
+ * — meranie musí mať nameranú hodnotu.
+ */
+export async function skipCheck(input: {
+  membershipId: string;
+  pin: string;
+  deviceId: string;
+  reason: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = skipSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: 'Uveď dôvod preskočenia.' };
+  }
+
+  const session = await getKioskSession();
+  if (!session) {
+    return { ok: false, error: 'Kiosk nie je spárovaný.' };
+  }
+
+  const check = await verifyEmployeePin(
+    session.tenantId,
+    session.kioskId,
+    parsed.data.membershipId,
+    parsed.data.pin,
+  );
+  if (!check.ok) {
+    return { ok: false, error: check.error };
+  }
+
+  const supabase = createServiceClient();
+
+  const { data: device } = await supabase
+    .from('devices')
+    .select('id')
+    .eq('id', parsed.data.deviceId)
+    .eq('tenant_id', session.tenantId)
+    .eq('location_id', session.locationId)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (!device) {
+    return { ok: false, error: 'Neznáme zariadenie.' };
+  }
+
+  const { error } = await supabase.from('check_skips').insert({
+    tenant_id: session.tenantId,
+    location_id: session.locationId,
+    device_id: device.id,
+    membership_id: check.member.id,
+    reason: parsed.data.reason,
+  });
+
+  if (error) {
+    return { ok: false, error: 'Zápis zlyhal, skús znova.' };
+  }
+
+  return { ok: true };
 }

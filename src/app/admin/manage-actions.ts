@@ -1,25 +1,85 @@
 'use server';
 
+import { createHash, randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { LOCATION_COOKIE } from '@/lib/admin/constants';
 
 // Všetky mutácie bežia pod RLS klientom prihláseného admina —
 // policies pustia zápis len tenant_adminovi v rámci jeho tenanta.
 
+/**
+ * Tenant + práve zvolená prevádzka. Prevádzka sa drží v cookie; hodnota sa
+ * VŽDY overuje proti DB, takže podvrhnuté id z prehliadača nič neotvorí —
+ * RLS aj tak vráti len prevádzky vlastného tenanta.
+ */
 async function getScope() {
   const supabase = await createClient();
-  const [{ data: tenant }, { data: location }] = await Promise.all([
+  const cookieStore = await cookies();
+
+  const [{ data: tenant }, { data: locations }] = await Promise.all([
     supabase.from('tenants').select('id').maybeSingle(),
-    supabase.from('locations').select('id').limit(1).maybeSingle(),
+    supabase.from('locations').select('id').eq('active', true).order('created_at'),
   ]);
-  return { supabase, tenantId: tenant?.id ?? null, locationId: location?.id ?? null };
+
+  const wanted = cookieStore.get(LOCATION_COOKIE)?.value;
+  const valid = (locations ?? []).find((l) => l.id === wanted);
+  const locationId = valid?.id ?? locations?.[0]?.id ?? null;
+
+  return { supabase, tenantId: tenant?.id ?? null, locationId };
 }
 
 function back(path: string, msg?: string): never {
   redirect(msg ? `${path}?msg=${encodeURIComponent(msg)}` : path);
+}
+
+// ---------------------------------------------------------------- Prevádzky
+
+export async function switchLocation(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('locationId'));
+  if (!id.success) back('/admin');
+
+  const cookieStore = await cookies();
+  cookieStore.set(LOCATION_COOKIE, id.data, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 365,
+  });
+
+  revalidatePath('/admin', 'layout');
+  back('/admin');
+}
+
+export async function createLocation(formData: FormData) {
+  const name = z.string().trim().min(1).max(80).safeParse(formData.get('name'));
+  if (!name.success) back('/admin/locations', 'Zadaj názov prevádzky.');
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/locations', 'Účet nemá priradenú prevádzku.');
+
+  const { error } = await supabase
+    .from('locations')
+    .insert({ tenant_id: tenantId, name: name.data });
+  if (error) back('/admin/locations', 'Uloženie zlyhalo.');
+
+  revalidatePath('/admin/locations');
+  back('/admin/locations');
+}
+
+export async function toggleLocation(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('id'));
+  const active = formData.get('active') === 'true';
+  if (!id.success) back('/admin/locations');
+
+  const { supabase } = await getScope();
+  await supabase.from('locations').update({ active }).eq('id', id.data);
+  revalidatePath('/admin/locations');
+  back('/admin/locations');
 }
 
 // ---------------------------------------------------------------- Zariadenia
@@ -90,6 +150,95 @@ export async function toggleDevice(formData: FormData) {
   back('/admin/devices');
 }
 
+/**
+ * Hromadný import zariadení. Prevádzka s tridsiatimi chladničkami ich nebude
+ * klikať po jednom. Formát riadku: názov;kód typu;min;max
+ */
+export async function importDevices(formData: FormData) {
+  const raw = z.string().trim().min(1).max(20000).safeParse(formData.get('csv'));
+  if (!raw.success) back('/admin/devices', 'Vlož riadky na import.');
+
+  const { supabase, tenantId, locationId } = await getScope();
+  if (!tenantId || !locationId) back('/admin/devices', 'Účet nemá priradenú prevádzku.');
+
+  const { data: types } = await supabase.from('device_types').select('id, code');
+  const typeByCode = new Map((types ?? []).map((t) => [t.code.toLowerCase(), t.id]));
+
+  const rows = raw.data
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const toInsert: Record<string, unknown>[] = [];
+  const problems: string[] = [];
+
+  rows.forEach((line, i) => {
+    const [name, code, min, max] = line.split(';').map((c) => c?.trim() ?? '');
+    if (!name || !code) {
+      problems.push(`riadok ${i + 1}: chýba názov alebo kód typu`);
+      return;
+    }
+    const typeId = typeByCode.get(code.toLowerCase());
+    if (!typeId) {
+      problems.push(`riadok ${i + 1}: neznámy typ "${code}"`);
+      return;
+    }
+    const minN = min === '' ? null : Number(min.replace(',', '.'));
+    const maxN = max === '' ? null : Number(max.replace(',', '.'));
+    if ((minN != null && Number.isNaN(minN)) || (maxN != null && Number.isNaN(maxN))) {
+      problems.push(`riadok ${i + 1}: limit nie je číslo`);
+      return;
+    }
+    toInsert.push({
+      tenant_id: tenantId,
+      location_id: locationId,
+      device_type_id: typeId,
+      name,
+      min_c: minN,
+      max_c: maxN,
+      sort_order: i,
+    });
+  });
+
+  // Buď prejde celý import, alebo nič — čiastočne naimportovaný zoznam
+  // zariadení je horší než žiadny, lebo sa ťažko dohľadáva, čo chýba.
+  if (problems.length > 0) {
+    back('/admin/devices', `Import zrušený — ${problems.slice(0, 3).join('; ')}`);
+  }
+  if (toInsert.length === 0) back('/admin/devices', 'Nič na import.');
+
+  const { error } = await supabase.from('devices').insert(toInsert);
+  if (error) back('/admin/devices', 'Import zlyhal.');
+
+  revalidatePath('/admin/devices');
+  back('/admin/devices', `Naimportovaných ${toInsert.length} zariadení.`);
+}
+
+// ------------------------------------------------------------ Typy zariadení
+
+export async function createDeviceType(formData: FormData) {
+  const name = z.string().trim().min(1).max(60).safeParse(formData.get('name'));
+  const code = z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9_]{2,30}$/)
+    .safeParse(formData.get('code'));
+  if (!name.success || !code.success) {
+    back('/admin/devices', 'Kód typu: malé písmená, číslice a podčiarkovník.');
+  }
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/devices', 'Účet nemá priradenú prevádzku.');
+
+  const { error } = await supabase
+    .from('device_types')
+    .insert({ tenant_id: tenantId, name: name.data, code: code.data });
+  if (error) back('/admin/devices', 'Typ sa nepodarilo pridať (kód už existuje?).');
+
+  revalidatePath('/admin/devices');
+  back('/admin/devices', 'Typ pridaný. Limit mu nastav priamo na zariadení.');
+}
+
 // -------------------------------------------------------------- Zamestnanci
 
 const employeeSchema = z.object({
@@ -155,6 +304,45 @@ export async function toggleEmployee(formData: FormData) {
   back('/admin/employees');
 }
 
+// ------------------------------------------------------------------ Rozvrhy
+
+export async function createSchedule(formData: FormData) {
+  const deviceId = z.string().uuid().safeParse(formData.get('deviceId'));
+  const dueTime = z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .safeParse(formData.get('dueTime'));
+  const tolerance = z.coerce.number().int().min(5).max(720).safeParse(formData.get('toleranceMin'));
+  if (!deviceId.success || !dueTime.success || !tolerance.success) {
+    back('/admin/schedules', 'Vyplň zariadenie, čas a toleranciu (5–720 min).');
+  }
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/schedules', 'Účet nemá priradenú prevádzku.');
+
+  const { error } = await supabase.from('schedules').insert({
+    tenant_id: tenantId,
+    device_id: deviceId.data,
+    due_time: dueTime.data,
+    tolerance_min: tolerance.data,
+  });
+  if (error) back('/admin/schedules', 'Uloženie zlyhalo.');
+
+  revalidatePath('/admin/schedules');
+  back('/admin/schedules');
+}
+
+export async function toggleSchedule(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('id'));
+  const active = formData.get('active') === 'true';
+  if (!id.success) back('/admin/schedules');
+
+  const { supabase } = await getScope();
+  await supabase.from('schedules').update({ active }).eq('id', id.data);
+  revalidatePath('/admin/schedules');
+  back('/admin/schedules');
+}
+
 // ------------------------------------------------- Nápravné opatrenia
 
 const correctiveSchema = z.object({
@@ -186,6 +374,63 @@ export async function addCorrectiveAction(formData: FormData) {
 
   revalidatePath('/admin');
   back('/admin');
+}
+
+// --------------------------------------------------------------- Pozvánky
+
+const INVITE_VALID_DAYS = 7;
+
+/**
+ * Pozvanie ďalšieho admina. Token sa vracia jednorazovo v URL a v DB je len
+ * jeho SHA-256 hash — rovnaký princíp ako device token kiosku, takže únik
+ * databázy neumožní prevzatie účtu.
+ */
+export async function inviteAdmin(formData: FormData) {
+  const email = z.string().trim().email().safeParse(formData.get('email'));
+  const name = z.string().trim().min(1).max(80).safeParse(formData.get('displayName'));
+  if (!email.success || !name.success) back('/admin/team', 'Zadaj meno a platný email.');
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/team', 'Účet nemá priradenú prevádzku.');
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const token = randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + INVITE_VALID_DAYS * 24 * 60 * 60 * 1000);
+
+  const { error } = await supabase.from('invitations').insert({
+    tenant_id: tenantId,
+    email: email.data.toLowerCase(),
+    display_name: name.data,
+    token_hash: createHash('sha256').update(token).digest('hex'),
+    invited_by: user?.id ?? null,
+    expires_at: expires.toISOString(),
+  });
+  if (error) back('/admin/team', 'Pozvánku sa nepodarilo vytvoriť.');
+
+  revalidatePath('/admin/team');
+  // Odoslanie emailu zatiaľ nie je zapojené, preto sa odkaz ukáže adminovi,
+  // aby ho poslal sám. Token sa už nikdy nezobrazí.
+  back('/admin/team', `token:${token}`);
+}
+
+export async function revokeInvitation(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('id'));
+  if (!id.success) back('/admin/team');
+
+  const { supabase } = await getScope();
+  // Zneplatnenie = posunutie expirácie do minulosti; záznam zostáva
+  // v auditnej stope.
+  await supabase
+    .from('invitations')
+    .update({ expires_at: new Date(Date.now() - 1000).toISOString() })
+    .eq('id', id.data)
+    .is('accepted_at', null);
+
+  revalidatePath('/admin/team');
+  back('/admin/team', 'Pozvánka zneplatnená.');
 }
 
 // ------------------------------------------------------------------ Kiosky

@@ -16,6 +16,20 @@ type MeasurementRow = {
   corrective_actions: CorrectiveAction[] | null;
 };
 
+type MissedRow = {
+  id: string;
+  due_at: string;
+  devices: { name: string } | null;
+};
+
+type SkipRow = {
+  id: string;
+  reason: string;
+  skipped_at: string;
+  devices: { name: string } | null;
+  memberships: { display_name: string } | null;
+};
+
 const SELECT =
   'id, device_id, value_c, status, measured_at, devices(name), memberships(display_name), corrective_actions(id, action, created_at)';
 
@@ -145,7 +159,13 @@ export default async function AdminDashboard({
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [{ data: alarms }, { data: today }, { data: deviceRows }] = await Promise.all([
+  const [
+    { data: alarms },
+    { data: today },
+    { data: deviceRows },
+    { data: missedRows },
+    { data: skipRows },
+  ] = await Promise.all([
     supabase
       .from('measurements')
       .select(SELECT)
@@ -160,6 +180,18 @@ export default async function AdminDashboard({
       .order('measured_at', { ascending: false })
       .limit(200),
     supabase.from('devices').select('id, name').eq('active', true).order('sort_order'),
+    supabase
+      .from('missed_checks')
+      .select('id, due_at, devices(name)')
+      .gte('due_at', sevenDaysAgo)
+      .order('due_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('check_skips')
+      .select('id, reason, skipped_at, devices(name), memberships(display_name)')
+      .gte('skipped_at', sevenDaysAgo)
+      .order('skipped_at', { ascending: false })
+      .limit(50),
   ]);
 
   const alarmRows = (alarms ?? []) as unknown as MeasurementRow[];
@@ -176,6 +208,17 @@ export default async function AdminDashboard({
   const unresolvedAlarms = alarmRows.filter(
     (m) => (m.corrective_actions ?? []).length === 0,
   ).length;
+
+  const missed = (missedRows ?? []) as unknown as MissedRow[];
+  const skips = (skipRows ?? []) as unknown as SkipRow[];
+
+  // Bez rozvrhu sa zmeškanie nedá zistiť — prázdny zoznam by inak vyzeral
+  // ako "všetko v poriadku", čo je nebezpečne zavádzajúce.
+  const { count: scheduleCount } = await supabase
+    .from('schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('active', true);
+  const hasSchedules = (scheduleCount ?? 0) > 0;
 
   const monthAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
 
@@ -255,6 +298,56 @@ export default async function AdminDashboard({
               <AlarmCard key={m.id} m={m} />
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">Zmeškané kontroly — 7 dní</h2>
+          <span
+            className={`rounded-full px-3 py-1 text-sm font-semibold ${
+              missed.length > 0 ? 'bg-warn/10 text-warn' : 'bg-ok/10 text-ok'
+            }`}
+          >
+            {missed.length}
+          </span>
+        </div>
+        {missed.length === 0 ? (
+          <p className="py-6 text-center text-sm text-steel/50">
+            {hasSchedules
+              ? 'Žiadne zmeškané kontroly. 👍'
+              : 'Zatiaľ nemáš rozvrhy — bez nich systém nevie, že sa na zariadenie zabudlo. Nastav ich v sekcii Rozvrhy.'}
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-steel/5">
+            {missed.map((m) => (
+              <li key={m.id} className="py-2 text-sm">
+                <span className="font-semibold">{m.devices?.name ?? '—'}</span>{' '}
+                <span className="text-steel/60">
+                  nebola odmeraná do {formatTime(m.due_at)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {skips.length > 0 && (
+          <>
+            <h3 className="mt-6 text-sm font-bold uppercase text-steel/50">
+              Vedome preskočené
+            </h3>
+            <ul className="mt-2 divide-y divide-steel/5">
+              {skips.map((s) => (
+                <li key={s.id} className="py-2 text-sm">
+                  <span className="font-semibold">{s.devices?.name ?? '—'}</span>{' '}
+                  <span className="text-steel/60">
+                    — {s.reason} ({s.memberships?.display_name ?? '—'},{' '}
+                    {formatTime(s.skipped_at)})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 

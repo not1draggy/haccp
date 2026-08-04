@@ -1,5 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
-import { createDevice, toggleDevice, updateDeviceLimits } from '../manage-actions';
+import {
+  createDevice,
+  createDeviceType,
+  importDevices,
+  toggleDevice,
+  updateDeviceLimits,
+} from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +37,7 @@ export default async function DevicesPage({
       .from('devices')
       .select('id, name, active, min_c, max_c, device_type_id, device_types(name)')
       .order('sort_order'),
-    supabase.from('device_types').select('id, name').order('name'),
+    supabase.from('device_types').select('id, name, code').order('name'),
     supabase
       .from('rules')
       .select('device_type_id, min_c, max_c, valid_from')
@@ -71,7 +77,7 @@ export default async function DevicesPage({
           >
             {types.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name}
+                {t.name} ({t.code})
               </option>
             ))}
           </select>
@@ -171,6 +177,65 @@ export default async function DevicesPage({
         )}
         <p className="mt-3 text-xs text-steel/50">
           Zariadenia sa nemazú, iba deaktivujú — história meraní musí zostať kompletná (audit).
+        </p>
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-bold">Hromadný import</h2>
+        <p className="mt-1 text-sm text-steel/60">
+          Jeden riadok = jedno zariadenie:{' '}
+          <code className="rounded bg-frost px-1">názov;kód typu;min;max</code>. Min a
+          max môžu byť prázdne — vtedy platí štandardný limit typu.
+        </p>
+        <form action={importDevices} className="mt-4 space-y-3">
+          <textarea
+            name="csv"
+            required
+            rows={5}
+            aria-label="Riadky na import"
+            placeholder={'Chladnička kuchyňa;chladnicka;0;5\nMraznička sklad;mraznicka;;-18'}
+            className="w-full rounded-lg border border-steel/20 px-3 py-2 font-mono text-sm focus:border-steel focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-steel px-5 py-2 font-semibold text-white hover:bg-ink"
+          >
+            Importovať
+          </button>
+        </form>
+        <p className="mt-2 text-xs text-steel/50">
+          Ak je čo i len jeden riadok chybný, neimportuje sa nič — čiastočný
+          zoznam sa ťažko dohľadáva.
+        </p>
+      </section>
+
+      <section className="rounded-2xl bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-bold">Vlastný typ zariadenia</h2>
+        <form action={createDeviceType} className="mt-4 grid gap-3 sm:grid-cols-[2fr_1fr_auto]">
+          <input
+            name="name"
+            required
+            aria-label="Názov typu"
+            placeholder="Názov (napr. Šoková chladička)"
+            className="rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
+          />
+          <input
+            name="code"
+            required
+            pattern="[a-z0-9_]{2,30}"
+            aria-label="Kód typu"
+            placeholder="kod_typu"
+            className="rounded-lg border border-steel/20 px-3 py-2 font-mono focus:border-steel focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-steel px-5 py-2 font-semibold text-white hover:bg-ink"
+          >
+            Pridať typ
+          </button>
+        </form>
+        <p className="mt-2 text-xs text-steel/50">
+          Vlastný typ nemá legislatívny limit — nastav ho priamo na zariadení.
         </p>
       </section>
     </div>
