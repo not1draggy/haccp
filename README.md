@@ -1,7 +1,8 @@
-# HACCP SaaS
+# Digitálny HACCP denník
 
-Cloudový HACCP systém pre gastro prevádzky. Multi-tenant, append-only merania,
-verzované legislatívne pravidlá, kiosk režim pre kuchyňu.
+Evidencia teplôt pre gastro prevádzky, ktorá obstojí pri kontrole.
+Multi-tenant, append-only merania, verzované legislatívne pravidlá,
+kiosk režim pre kuchyňu, izolácia medzi pobočkami.
 
 | Dokument | Obsah |
 | --- | --- |
@@ -22,7 +23,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind · Supabase (Postgres + Auth) 
 
 1. Vytvor projekt na [supabase.com](https://supabase.com) (región `eu-central-1`).
 2. SQL Editor → spusti migrácie z `supabase/migrations/` **v poradí**:
-   `0001` → `0002` → `0003` → `0004` → `0005` → `0006` → `0007`.
+   `0001` až `0014` (poradie je dôležité — neskoršie stavajú na skorších).
 3. *(Odporúčané, nie povinné)* **Authentication → Hooks → Customize Access
    Token (JWT) Claims** → schéma `public`, funkcia `custom_access_token_hook`.
    Hook vloží `tenant_id` priamo do tokenu a ušetrí jeden dotaz pri každej
@@ -50,9 +51,9 @@ git push               # repo pripojené na Vercel
 ### 4. Onboarding prvého tenanta (SQL Editor)
 
 ```sql
--- Tenant + prevádzka
+-- Firma + prvá prevádzka
 insert into tenants (id, name) values
-  ('11111111-1111-1111-1111-111111111111', 'Reštaurácia U Janka');
+  ('11111111-1111-1111-1111-111111111111', 'Názov firmy');
 
 insert into locations (id, tenant_id, name) values
   ('22222222-2222-2222-2222-222222222222',
@@ -62,15 +63,17 @@ insert into locations (id, tenant_id, name) values
 -- skopíruj jeho UUID a vlož sem:
 insert into memberships (tenant_id, user_id, role, display_name) values
   ('11111111-1111-1111-1111-111111111111',
-   'AUTH_USER_UUID', 'tenant_admin', 'Ján Novák');
+   'AUTH_USER_UUID', 'tenant_admin', 'Meno správcu');
 ```
 
-Zvyšok — zariadenia, zamestnancov s PIN kódmi aj kiosky — už pridávaš
-**v administrácii**, nie cez SQL.
+Zvyšok už pridávaš **v administrácii**, nie cez SQL — vrátane názvu firmy,
+ďalších prevádzok (tablet a párovací kód sa vytvoria automaticky), zariadení,
+zamestnancov a rozvrhov.
 
 ### 5. Spustenie kiosku
 
-1. V administrácii → **Kiosky** pridaj tablet; vygeneruje sa párovací kód.
+1. Párovací kód nájdeš v administrácii → **Prevádzky** (vytvorí sa spolu
+   s prevádzkou) alebo → **Kiosky**, kde vieš pridať ďalší tablet.
 2. Na tablete otvor `https://tvoja-domena.sk/kiosk` a zadaj kód — tablet
    zostane spárovaný natrvalo.
 3. Flow merania: meno → PIN → zariadenie → teplota. PIN sa zadáva **raz za
@@ -107,11 +110,13 @@ Pracovné režimy sú v `.claude/commands/` (`/continue`, `/audit`, `/bugfix`,
 ## Stav projektu
 
 Hotové: schéma + RLS + audit + verzované pravidlá, kiosk flow bez prerušovania
-PIN-om, kompletná administrácia (zariadenia, limity, zamestnanci, kiosky),
+PIN-om, offline fronta meraní, rate limiting PIN-u, rozvrhy a evidencia
+zmeškaných kontrol, viac prevádzok s izoláciou medzi nimi, pozvánky adminov,
+kompletná administrácia (zariadenia, limity, zamestnanci, kiosky, história),
 alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline.
 
-Ďalšie fázy podľa `ROADMAP.md`: offline queue v kiosku · pg_cron alarmy zo
-zmeškaných meraní · PDF reporty · viac prevádzok v UI · pgTAP testy RLS.
+Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · E2E testy
+v CI · adminovia obmedzení na jednu prevádzku.
 
 ⚠️ Limity v seede (`0002`) sú štandardné SK/EU hodnoty, ale **pred predajom
 vyžadujú právnu verifikáciu** a doplnenie `legal_ref` citácií.

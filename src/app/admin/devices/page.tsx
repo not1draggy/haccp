@@ -1,4 +1,5 @@
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 import {
   createDevice,
   createDeviceType,
@@ -36,7 +37,7 @@ export default async function DevicesPage({
     supabase
       .from('devices')
       .select('id, name, active, min_c, max_c, device_type_id, device_types(name)')
-      .eq('location_id', locationId ?? '')
+      .eq('location_id', locationId ?? NO_LOCATION)
       .order('sort_order'),
     supabase.from('device_types').select('id, name, code').order('name'),
     supabase

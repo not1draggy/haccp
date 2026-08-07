@@ -15,13 +15,11 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 
 - [x] **Rate limiting na PIN** — 4-miestny PIN má 10 000 kombinácií.
       Limit je v DB, lebo serverless inštancie nezdieľajú pamäť.
-- [ ] **Offline queue v kiosku (IndexedDB)** — kuchyňa má slabú wifi.
-      Meranie sa musí uložiť lokálne a odoslať po obnovení spojenia.
-      Pozor na append-only: prehrávanie frontu nesmie vytvárať duplikáty
-      (idempotencia cez klientske UUID merania). Pozor aj na rate limiting —
-      dávkové odoslanie nesmie vyzerať ako útok hrubou silou.
-- [ ] **Rozvrhy a alarmy zo zmeškaných meraní** — tabuľka `schedules` už
-      existuje, chýba vyhodnocovanie cez `pg_cron` + notifikácia.
+- [x] **Offline queue v kiosku (IndexedDB)** vrátane idempotencie cez
+      klientske UUID. ⚠️ Neodskúšané za behu v prehliadači.
+- [x] **Rozvrhy a evidencia zmeškaných meraní** cez `pg_cron`.
+- [ ] **Notifikácia pri zmeškaní** (email/push) — zmeškanie sa dnes zapíše,
+      ale nikomu sa neozve; treba zvoliť kanál.
 - [ ] **PDF report za obdobie** — mesačný podklad pre kontrolu.
 - [ ] Zapnúť **leaked password protection** v Supabase Auth (Dashboard →
       Authentication → Passwords). Nález bezpečnostného lintera, nedá sa
@@ -29,13 +27,14 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 
 ## P2 — Škálovanie a viac prevádzok
 
-- [ ] **Podpora viacerých prevádzok (locations) v UI** — schéma to už vie,
-      admin však pracuje s prvou prevádzkou (`limit 1`). Treba prepínač
-      prevádzky a scoping všetkých obrazoviek.
-- [ ] **Pozvanie ďalšieho admina** — teraz sa membership pre `tenant_admin`
-      vytvára ručne cez SQL. Chýba pozvánkový flow.
-- [ ] Stránkovanie histórie meraní (teraz `limit 200/300`).
-- [ ] Vlastná správa typov zariadení per tenant.
+- [x] **Podpora viacerých prevádzok (locations) v UI** vrátane prepínača,
+      scopingu všetkých obrazoviek a izolácie medzi pobočkami.
+- [ ] **Admin obmedzený na jednu prevádzku** (rola `location_admin`).
+      Dnes majiteľ vidí všetky pobočky, čo je správne; vedúci jednej
+      pobočky však zatiaľ nemá vlastný obmedzený prístup.
+- [x] **Pozvanie ďalšieho admina** — pozvánkový flow s tokenom (v DB hash).
+- [x] Stránkovanie a filtrovanie histórie meraní.
+- [x] Vlastná správa typov zariadení per tenant.
 
 ## P3 — Kvalita a UX
 
@@ -43,11 +42,13 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
       overuje reálnym dotazom, že tenant A nevidí dáta tenanta B.
 - [ ] Zapojiť RLS test do CI, aby bežal automaticky pri každej zmene schémy.
 - [ ] E2E test kiosk flow (Playwright).
-- [ ] Poznámka a foto k meraniu.
-- [ ] „Preskočiť meranie s dôvodom".
-- [ ] Trend indikátor (šípka oproti minulej hodnote).
+- [x] Poznámka k meraniu.
+- [ ] Foto k meraniu (potrebuje Storage bucket + policies; stĺpec bol
+      medzitým odstránený, aby schéma nesľubovala niečo, čo nerobí).
+- [x] „Preskočiť meranie s dôvodom".
+- [x] Trend indikátor (šípka oproti minulej hodnote).
 - [ ] QR / čiarový kód na identifikáciu zariadenia.
-- [ ] Hromadný import zariadení (CSV).
+- [x] Hromadný import zariadení (CSV).
 - [x] Prístupnosť kiosku: `aria-live` pre výsledok merania, `role="alert"`
       pre chyby, popisy kláves, ovládanie fyzickou klávesnicou.
 - [ ] Prístupnosť: overiť kontrast `warn` (#d97706) na tmavom pozadí kiosku

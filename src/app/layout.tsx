@@ -2,8 +2,9 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'HACCP',
-  description: 'Cloudový HACCP systém pre gastro prevádzky',
+  title: 'Digitálny HACCP denník',
+  description:
+    'Evidencia teplôt pre gastro prevádzky — merania, ktoré obstoja pri kontrole.',
 };
 
 export const viewport: Viewport = {

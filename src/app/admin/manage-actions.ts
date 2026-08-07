@@ -37,6 +37,36 @@ function back(path: string, msg?: string): never {
   redirect(msg ? `${path}?msg=${encodeURIComponent(msg)}` : path);
 }
 
+/**
+ * Párovací kód tabletu. Vynechané sú znaky, ktoré si personál pri prepisovaní
+ * z papiera mýli (0/O, 1/I/L) — kód sa diktuje cez kuchyňu, nie kopíruje.
+ */
+function generatePairingCode(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return code;
+}
+
+/** Kód musí byť unikátny naprieč platformou — tablet podľa neho pozná prevádzku. */
+async function generateUniquePairingCode(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const code = generatePairingCode();
+    const { data } = await supabase
+      .from('kiosk_devices')
+      .select('id')
+      .eq('pairing_code', code)
+      .maybeSingle();
+    if (!data) return code;
+  }
+  // Po desiatich kolíziách je niečo zásadne zle; radšej zlyhať nahlas.
+  throw new Error('Nepodarilo sa vygenerovať voľný párovací kód.');
+}
+
 // ---------------------------------------------------------------- Prevádzky
 
 export async function switchLocation(formData: FormData) {
@@ -55,6 +85,11 @@ export async function switchLocation(formData: FormData) {
   back('/admin');
 }
 
+/**
+ * Nová prevádzka vrátane vlastného tabletu. Kód sa generuje hneď, lebo
+ * prevádzka bez tabletu nemá ako merať a admin by musel robiť druhý krok,
+ * na ktorý sa ľahko zabudne.
+ */
 export async function createLocation(formData: FormData) {
   const name = z.string().trim().min(1).max(80).safeParse(formData.get('name'));
   if (!name.success) back('/admin/locations', 'Zadaj názov prevádzky.');
@@ -62,13 +97,58 @@ export async function createLocation(formData: FormData) {
   const { supabase, tenantId } = await getScope();
   if (!tenantId) back('/admin/locations', 'Účet nemá priradenú prevádzku.');
 
-  const { error } = await supabase
+  const { data: location, error } = await supabase
     .from('locations')
-    .insert({ tenant_id: tenantId, name: name.data });
-  if (error) back('/admin/locations', 'Uloženie zlyhalo.');
+    .insert({ tenant_id: tenantId, name: name.data })
+    .select('id')
+    .single();
+  if (error || !location) back('/admin/locations', 'Uloženie zlyhalo.');
+
+  let code: string;
+  try {
+    code = await generateUniquePairingCode(supabase);
+  } catch {
+    back(
+      '/admin/locations',
+      'Prevádzka vytvorená, ale kód sa nepodarilo vygenerovať — pridaj tablet ručne v sekcii Kiosky.',
+    );
+  }
+
+  const { error: kioskError } = await supabase.from('kiosk_devices').insert({
+    tenant_id: tenantId,
+    location_id: location.id,
+    name: `Tablet — ${name.data}`,
+    pairing_code: code,
+  });
 
   revalidatePath('/admin/locations');
-  back('/admin/locations');
+
+  if (kioskError) {
+    back(
+      '/admin/locations',
+      'Prevádzka vytvorená, ale tablet nie — pridaj ho v sekcii Kiosky.',
+    );
+  }
+
+  back('/admin/locations', `Prevádzka „${name.data}" vytvorená. Kód tabletu: ${code}`);
+}
+
+/** Premenovanie firmy. Zobrazuje sa v hlavičke aj v podkladoch pre kontrolu. */
+export async function renameTenant(formData: FormData) {
+  const name = z.string().trim().min(1).max(120).safeParse(formData.get('name'));
+  if (!name.success) back('/admin/locations', 'Zadaj názov firmy.');
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/locations', 'Účet nemá priradenú prevádzku.');
+
+  const { error } = await supabase
+    .from('tenants')
+    .update({ name: name.data })
+    .eq('id', tenantId);
+  if (error) back('/admin/locations', 'Premenovanie zlyhalo.');
+
+  revalidatePath('/admin', 'layout');
+  back('/admin/locations', 'Názov firmy zmenený.');
 }
 
 export async function toggleLocation(formData: FormData) {
@@ -495,22 +575,13 @@ export async function revokeInvitation(formData: FormData) {
 
 // ------------------------------------------------------------------ Kiosky
 
-function generatePairingCode(): string {
-  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return code;
-}
-
 export async function createKiosk(formData: FormData) {
   const name = z.string().trim().min(1).max(80).safeParse(formData.get('name'));
   if (!name.success) back('/admin/kiosks', 'Zadaj názov kiosku.');
 
   // Vlastný kód je voliteľný — prevádzky si ich radi volia podľa pobočky.
   const rawCode = String(formData.get('pairingCode') ?? '').trim().toUpperCase();
-  let code = generatePairingCode();
+  let code = '';
   if (rawCode.length > 0) {
     const parsedCode = z
       .string()
@@ -524,6 +595,14 @@ export async function createKiosk(formData: FormData) {
 
   const { supabase, tenantId, locationId } = await getScope();
   if (!tenantId || !locationId) back('/admin/kiosks', 'Účet nemá priradenú prevádzku.');
+
+  if (code === '') {
+    try {
+      code = await generateUniquePairingCode(supabase);
+    } catch {
+      back('/admin/kiosks', 'Kód sa nepodarilo vygenerovať, skús znova.');
+    }
+  }
 
   const { error } = await supabase.from('kiosk_devices').insert({
     tenant_id: tenantId,

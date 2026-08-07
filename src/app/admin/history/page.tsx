@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,7 @@ export default async function HistoryPage({
       'id, value_c, status, measured_at, client_measured_at, note, devices(name), memberships(display_name)',
       { count: 'exact' },
     )
-    .eq('location_id', locationId ?? '')
+    .eq('location_id', locationId ?? NO_LOCATION)
     .order('measured_at', { ascending: false })
     .range(from, from + PAGE_SIZE - 1);
 
@@ -56,7 +57,7 @@ export default async function HistoryPage({
     supabase
       .from('devices')
       .select('id, name')
-      .eq('location_id', locationId ?? '')
+      .eq('location_id', locationId ?? NO_LOCATION)
       .order('sort_order'),
   ]);
 

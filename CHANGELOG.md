@@ -2,6 +2,45 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — 2026-08-07
+
+### Anonymita medzi pobočkami
+
+- **Zamestnanci sú viazaní na prevádzky** (`membership_locations`, migrácia
+  `0012`). Doteraz viseli len na firme, takže tablet v jednej pobočke ponúkal
+  mená pracovníkov zo všetkých pobočiek. Väzba je M:N — vedúci alebo záskok
+  reálne pokrýva viac prevádzok. Overené: kiosk pobočky A nevidí zamestnanca
+  ani zariadenie pobočky B a naopak, vlastných vidí.
+- **Kiosk načítaval merania podľa firmy, nie prevádzky.** Okrem úniku to bola
+  funkčná chyba: záznamy inej pobočky mohli zaplniť okno 500 riadkov a vlastné
+  zariadenie potom vyzeralo, akoby nemalo históriu.
+- **Vlastný párovací kód** — admin si ho môže zvoliť podľa pobočky.
+
+### Opravené
+
+- **Chýbajúca prevádzka zhodila celú administráciu.** Filtre používali
+  `.eq('location_id', '')`, čo Postgres nevie pretypovať na uuid → 500 na
+  každej stránke. Nastalo by to hneď po deaktivovaní jedinej prevádzky.
+  Nahradené neexistujúcim UUID, ktoré korektne vráti prázdny výsledok.
+- **Vyhľadanie existujúceho účtu pri pozvánke stránkovalo po 50 používateľoch** —
+  pri väčšom počte účtov by pozvánka zlyhala bez zjavnej príčiny.
+- Odstránený nepoužívaný stĺpec `measurements.photo_path` (migrácia `0014`).
+  Nič doň nezapisovalo; pri audite by vyzeralo, že fotky evidujeme.
+
+### Pridané
+
+- **Nová prevádzka vytvorí rovno aj svoj tablet** a vygeneruje párovací kód —
+  prevádzka bez tabletu nemá ako merať a druhý krok sa ľahko zabudne.
+  Kód je unikátny naprieč platformou, generátor kolíziu overuje.
+- **Premenovanie firmy z administrácie** (migrácia `0013`). Doteraz sa dalo
+  zmeniť len cez SQL. Overené aj to, že cudzí účet názov zmeniť nedokáže.
+- Upozornenie v administrácii, keď firma nemá žiadnu aktívnu prevádzku.
+
+### Zmenené
+
+- Produkt sa volá **Digitálny HACCP denník**; zástupné názvy typu
+  „Reštaurácia U Janka" nahradené neutrálnymi v dokumentácii aj v dátach.
+
 ## [0.4.0] — 2026-07-31
 
 ### Bezpečnosť

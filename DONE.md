@@ -2,6 +2,18 @@
 
 Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 
+## Sprint: anonymita pobočiek a revízia aplikácie
+
+- [x] Zamestnanci viazaní na prevádzky (`membership_locations`)
+- [x] Kiosk načítava merania podľa prevádzky, nie firmy
+- [x] Vlastný párovací kód pri kiosku
+- [x] Nová prevádzka vytvorí aj tablet a vygeneruje kód
+- [x] Premenovanie firmy z administrácie
+- [x] Oprava pádu administrácie pri chýbajúcej prevádzke
+- [x] Oprava stránkovania pri hľadaní účtu v pozvánke
+- [x] Odstránenie mŕtveho stĺpca `photo_path`
+- [x] Premenovanie produktu a odstránenie zástupných názvov
+
 ## Sprint: bezpečnosť a overiteľnosť
 
 - [x] Rate limiting na overovanie PIN (5 pokusov / 15 min per zamestnanec,
