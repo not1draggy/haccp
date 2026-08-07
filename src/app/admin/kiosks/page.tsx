@@ -27,12 +27,20 @@ export default async function KiosksPage({
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <h2 className="text-lg font-bold">Pridať kiosk (tablet)</h2>
-        <form action={createKiosk} className="mt-4 grid gap-3 sm:grid-cols-[2fr_auto]">
+        <form action={createKiosk} className="mt-4 grid gap-3 sm:grid-cols-[2fr_1fr_auto]">
           <input
             name="name"
             required
+            aria-label="Názov kiosku"
             placeholder="Názov (napr. Tablet kuchyňa)"
             className="rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
+          />
+          <input
+            name="pairingCode"
+            pattern="[A-Za-z0-9]{4,12}"
+            aria-label="Vlastný párovací kód (voliteľné)"
+            placeholder="Kód (voliteľné)"
+            className="rounded-lg border border-steel/20 px-3 py-2 font-mono uppercase focus:border-steel focus:outline-none"
           />
           <button
             type="submit"
@@ -42,7 +50,9 @@ export default async function KiosksPage({
           </button>
         </form>
         <p className="mt-2 text-xs text-steel/50">
-          Párovací kód sa vygeneruje automaticky — zadáš ho raz na tablete na adrese /kiosk.
+          Kód si môžeš zvoliť (napr. podľa pobočky), inak sa vygeneruje. Zadáš ho
+          raz na tablete na adrese /kiosk. Tablet potom vidí výhradne zariadenia
+          a zamestnancov tejto prevádzky.
         </p>
       </section>
 

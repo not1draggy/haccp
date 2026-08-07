@@ -30,6 +30,10 @@ Supabase (Postgres + Auth) · Vercel.
    Zmazanie zariadenia by osirotelo históriu meraní a rozbilo audit.
 7. **Každá mutácia governed tabuliek ide do `audit_log`**, do ktorého sa nedá
    priamo zapisovať ani ho meniť.
+8. **Pobočky o sebe navzájom nevedia.** Kiosk smie načítať iba zariadenia,
+   zamestnancov a merania svojej `location_id`. Zamestnanci sú k prevádzkam
+   viazaní cez `membership_locations` — pri pridávaní čohokoľvek do kiosk
+   dotazov over, či je to filtrované podľa prevádzky, nie len podľa tenanta.
 
 ## Architektonické rozhodnutia
 
