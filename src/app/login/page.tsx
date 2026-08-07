@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { login } from './actions';
 
 export default async function LoginPage({
@@ -52,6 +53,13 @@ export default async function LoginPage({
         >
           Prihlásiť sa
         </button>
+
+        <p className="mt-4 text-center text-sm text-steel/60">
+          Ešte nemáš firmu v systéme?{' '}
+          <Link href="/registracia" className="font-semibold text-ink underline">
+            Zaregistruj ju
+          </Link>
+        </p>
       </form>
     </main>
   );

@@ -23,12 +23,17 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 - [ ] **PDF report za obdobie** — mesačný podklad pre kontrolu.
 - [ ] Zapnúť **leaked password protection** v Supabase Auth (Dashboard →
       Authentication → Passwords). Nález bezpečnostného lintera, nedá sa
-      spraviť z kódu.
+      spraviť z kódu. Odkedy je registrácia verejná (`/registracia`), heslo
+      si volí zákazník sám a jediná kontrola je minimálna dĺžka 8 znakov —
+      priorita tým stúpla.
 
 ## P2 — Škálovanie a viac prevádzok
 
 - [x] **Podpora viacerých prevádzok (locations) v UI** vrátane prepínača,
       scopingu všetkých obrazoviek a izolácie medzi pobočkami.
+- [x] **Samoregistrácia firmy** (migrácia `0015`, `/registracia`) — nový
+      zákazník už nepotrebuje zásah do DB. Tenant, prevádzka, tablet aj
+      členstvo admina vznikajú v jednej transakcii.
 - [ ] **Admin obmedzený na jednu prevádzku** (rola `location_admin`).
       Dnes majiteľ vidí všetky pobočky, čo je správne; vedúci jednej
       pobočky však zatiaľ nemá vlastný obmedzený prístup.

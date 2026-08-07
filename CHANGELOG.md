@@ -29,12 +29,36 @@ Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Pridané
 
+- **Samoregistrácia firmy** (`/registracia`, migrácia `0015`). Doteraz sa
+  nový tenant dal založiť iba ručne cez SQL — každý ďalší zákazník znamenal
+  zásah do databázy. Formulár založí naraz účet, firmu, prvú prevádzku, jej
+  tablet aj členstvo admina.
+
+  Založenie je **jedna DB funkcia, nie štyri inserty zo server action**:
+  ide o štyri závislé zápisy a zlyhanie medzi nimi by nechalo firmu bez
+  admina alebo prevádzku bez tabletu — teda účet, s ktorým sa nedá pracovať
+  a ktorý sa nedá ani zmazať cez UI. `register_tenant` je preto jedna
+  transakcia a je volateľná **výhradne service role** (`revoke ... from
+  public, anon, authenticated`) — v momente registrácie ešte neexistuje
+  členstvo, takže RLS by zápis neprepustila, a zároveň sa nesmie dať
+  zavolať anonymne cez `/rest/v1/rpc`, inak by ktokoľvek vyrábal tenantov.
+  Overené: `anon` ani `authenticated` na ňu nemajú `EXECUTE`.
+
+  Jeden účet = jedna firma; opakované odoslanie formulára by inak založilo
+  druhého tenanta a používateľ by skončil v tom, ktorý mu `current_tenant_id()`
+  vyberie ako prvý. Ak RPC zlyhá, čerstvo vytvorený auth účet sa zmaže, aby
+  sa email dal použiť znova. Existujúci email registrácia neprevezme — z
+  formulára by sa tak stal nástroj na prepísanie cudzieho hesla.
+
 - **Nová prevádzka vytvorí rovno aj svoj tablet** a vygeneruje párovací kód —
   prevádzka bez tabletu nemá ako merať a druhý krok sa ľahko zabudne.
   Kód je unikátny naprieč platformou, generátor kolíziu overuje.
 - **Premenovanie firmy z administrácie** (migrácia `0013`). Doteraz sa dalo
   zmeniť len cez SQL. Overené aj to, že cudzí účet názov zmeniť nedokáže.
 - Upozornenie v administrácii, keď firma nemá žiadnu aktívnu prevádzku.
+  Zobrazuje sa **nad** obsahom, nie namiesto neho — inak by zakrylo aj
+  formulár na stránke Prevádzky, teda jediné miesto, kde sa dá chýbajúca
+  prevádzka vytvoriť.
 
 ### Zmenené
 
