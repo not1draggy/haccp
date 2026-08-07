@@ -1,4 +1,5 @@
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 import { createSchedule, toggleSchedule } from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,7 @@ export default async function SchedulesPage({
     .from('devices')
     .select('id, name')
     .eq('active', true)
-    .eq('location_id', locationId ?? '')
+    .eq('location_id', locationId ?? NO_LOCATION)
     .order('sort_order');
 
   const devices = deviceRows ?? [];
@@ -34,7 +35,7 @@ export default async function SchedulesPage({
   const { data: scheduleRows } = await supabase
     .from('schedules')
     .select('id, due_time, tolerance_min, active, device_id, devices(name)')
-    .in('device_id', devices.length > 0 ? devices.map((d) => d.id) : ['00000000-0000-0000-0000-000000000000'])
+    .in('device_id', devices.length > 0 ? devices.map((d) => d.id) : [NO_LOCATION])
     .order('due_time');
 
   const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];

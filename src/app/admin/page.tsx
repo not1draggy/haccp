@@ -1,4 +1,5 @@
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 import { addCorrectiveAction } from './manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -154,7 +155,7 @@ export default async function AdminDashboard({
 }) {
   const { msg } = await searchParams;
   const { supabase, locationId, locationName } = await getAdminScope();
-  const loc = locationId ?? '';
+  const loc = locationId ?? NO_LOCATION;
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const todayStart = new Date();

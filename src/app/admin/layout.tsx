@@ -51,7 +51,7 @@ export default async function AdminLayout({
       <header className="border-b border-steel/10 bg-white">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-baseline gap-3">
-            <span className="font-bold">HACCP</span>
+            <span className="font-bold">HACCP denník</span>
             <span className="text-sm text-steel/60">{tenantName}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -102,7 +102,26 @@ export default async function AdminLayout({
           ))}
         </nav>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        {(locations?.length ?? 0) === 0 ? (
+          <div
+            role="status"
+            className="rounded-2xl border border-warn/30 bg-warn/5 p-6 text-center"
+          >
+            <p className="font-semibold">Žiadna aktívna prevádzka</p>
+            <p className="mt-1 text-sm text-steel/70">
+              Zariadenia, tablety ani merania nemajú kam patriť. Vytvor prevádzku
+              v sekcii{' '}
+              <Link href="/admin/locations" className="font-semibold underline">
+                Prevádzky
+              </Link>
+              .
+            </p>
+          </div>
+        ) : (
+          children
+        )}
+      </main>
     </div>
   );
 }

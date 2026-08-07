@@ -55,8 +55,16 @@ export async function acceptInvitation(formData: FormData) {
 
   if (createError) {
     // Účet s týmto emailom už existuje — pozvánku naviažeme naň.
-    const { data: list } = await admin.auth.admin.listUsers();
-    userId = list?.users.find((u) => u.email?.toLowerCase() === invite.email)?.id ?? null;
+    // listUsers stránkuje (default 50); bez zvýšenia by sa pri väčšom počte
+    // účtov existujúci používateľ "stratil" a pozvánka by zlyhala bez príčiny.
+    let found: string | null = null;
+    for (let page = 1; page <= 20 && !found; page++) {
+      const { data: list } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+      if (!list || list.users.length === 0) break;
+      found = list.users.find((u) => u.email?.toLowerCase() === invite.email)?.id ?? null;
+      if (list.users.length < 200) break;
+    }
+    userId = found;
     if (!userId) {
       redirect(`/invite/${parsed.data.token}?error=account`);
     }

@@ -4,9 +4,9 @@ export default function HomePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-8 p-6">
       <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight">HACCP</h1>
+        <h1 className="text-4xl font-bold tracking-tight">Digitálny HACCP denník</h1>
         <p className="mt-2 text-steel/70">
-          Digitálna evidencia meraní pre gastro prevádzky
+          Evidencia teplôt, ktorá obstojí pri kontrole
         </p>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row">

@@ -1,4 +1,5 @@
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 import { createKiosk, toggleKiosk, unpairKiosk } from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,7 @@ export default async function KiosksPage({
   const { data: rows } = await supabase
     .from('kiosk_devices')
     .select('id, name, pairing_code, paired_at, last_seen_at, active')
-    .eq('location_id', locationId ?? '')
+    .eq('location_id', locationId ?? NO_LOCATION)
     .order('created_at');
 
   const kiosks = rows ?? [];

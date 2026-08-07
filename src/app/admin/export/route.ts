@@ -1,4 +1,5 @@
 import { getAdminScope } from '@/lib/admin/scope';
+import { NO_LOCATION } from '@/lib/admin/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +66,7 @@ export async function GET(request: Request) {
     .select(
       'measured_at, value_c, status, devices(name), memberships(display_name), corrective_actions(action, created_at)',
     )
-    .eq('location_id', locationId ?? '')
+    .eq('location_id', locationId ?? NO_LOCATION)
     .gte('measured_at', from.toISOString())
     .lte('measured_at', to.toISOString())
     .order('measured_at', { ascending: false })
