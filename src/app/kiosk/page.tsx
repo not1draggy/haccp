@@ -22,12 +22,15 @@ export default async function KioskPage() {
     { data: lastRows },
     { data: scheduleRows },
   ] = await Promise.all([
+    // !inner join cez väzobnú tabuľku — tablet nesmie ponúknuť mená
+    // pracovníkov z iných pobočiek.
     supabase
       .from('memberships')
-      .select('id, display_name')
+      .select('id, display_name, membership_locations!inner(location_id)')
       .eq('tenant_id', session.tenantId)
       .eq('role', 'employee')
       .eq('active', true)
+      .eq('membership_locations.location_id', session.locationId)
       .order('display_name'),
     supabase
       .from('devices')
@@ -46,6 +49,7 @@ export default async function KioskPage() {
       .from('measurements')
       .select('device_id, value_c, status, measured_at')
       .eq('tenant_id', session.tenantId)
+      .eq('location_id', session.locationId)
       .order('measured_at', { ascending: false })
       .limit(500),
     supabase
@@ -78,7 +82,10 @@ export default async function KioskPage() {
 
   const scheduled = new Set((scheduleRows ?? []).map((s) => s.device_id));
 
-  const employees: KioskEmployee[] = employeeRows ?? [];
+  const employees: KioskEmployee[] = (employeeRows ?? []).map((e) => ({
+    id: e.id,
+    display_name: e.display_name,
+  }));
   const devices: KioskDevice[] = (deviceRows ?? []).map((d) => {
     const type = d.device_types as unknown as { name: string } | null;
     const rule = ruleByType.get(d.device_type_id);

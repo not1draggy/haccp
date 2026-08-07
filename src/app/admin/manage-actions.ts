@@ -253,19 +253,79 @@ export async function createEmployee(formData: FormData) {
   });
   if (!parsed.success) back('/admin/employees', 'Zadaj meno a PIN (4–8 číslic).');
 
-  const { supabase, tenantId } = await getScope();
+  const { supabase, tenantId, locationId } = await getScope();
   if (!tenantId) back('/admin/employees', 'Účet nemá priradenú prevádzku.');
 
-  const { error } = await supabase.from('memberships').insert({
-    tenant_id: tenantId,
-    role: 'employee',
-    display_name: parsed.data.name,
-    pin_hash: bcrypt.hashSync(parsed.data.pin, 10),
-  });
-  if (error) back('/admin/employees', 'Uloženie zlyhalo.');
+  const { data: created, error } = await supabase
+    .from('memberships')
+    .insert({
+      tenant_id: tenantId,
+      role: 'employee',
+      display_name: parsed.data.name,
+      pin_hash: bcrypt.hashSync(parsed.data.pin, 10),
+    })
+    .select('id')
+    .single();
+  if (error || !created) back('/admin/employees', 'Uloženie zlyhalo.');
+
+  // Bez priradenia by sa zamestnanec neobjavil na žiadnom tablete.
+  // Predvolene patrí do prevádzky, v ktorej ho admin práve zakladá.
+  if (locationId) {
+    await supabase.from('membership_locations').insert({
+      membership_id: created.id,
+      location_id: locationId,
+      tenant_id: tenantId,
+    });
+  }
 
   revalidatePath('/admin/employees');
   back('/admin/employees');
+}
+
+/**
+ * Prepis priradenia zamestnanca k prevádzkam. Tablet ponúka len mená
+ * pracovníkov svojej prevádzky, takže toto riadi, kde sa kto vie podpísať
+ * pod meranie.
+ */
+export async function setEmployeeLocations(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('id'));
+  if (!id.success) back('/admin/employees');
+
+  const chosen = formData
+    .getAll('locationIds')
+    .map((v) => z.string().uuid().safeParse(v))
+    .filter((r) => r.success)
+    .map((r) => (r as { data: string }).data);
+
+  const { supabase, tenantId } = await getScope();
+  if (!tenantId) back('/admin/employees', 'Účet nemá priradenú prevádzku.');
+
+  // Overíme, že ide o prevádzky vlastnej firmy — RLS by cudzí zápis aj tak
+  // odmietla, ale takto vrátime zrozumiteľnú hlášku namiesto chyby.
+  const { data: own } = await supabase.from('locations').select('id');
+  const allowed = new Set((own ?? []).map((l) => l.id));
+  const valid = chosen.filter((c) => allowed.has(c));
+
+  await supabase.from('membership_locations').delete().eq('membership_id', id.data);
+
+  if (valid.length > 0) {
+    const { error } = await supabase.from('membership_locations').insert(
+      valid.map((locId) => ({
+        membership_id: id.data,
+        location_id: locId,
+        tenant_id: tenantId,
+      })),
+    );
+    if (error) back('/admin/employees', 'Priradenie zlyhalo.');
+  }
+
+  revalidatePath('/admin/employees');
+  back(
+    '/admin/employees',
+    valid.length === 0
+      ? 'Zamestnanec nie je priradený k žiadnej prevádzke — na tablete sa neobjaví.'
+      : 'Priradenie uložené.',
+  );
 }
 
 export async function resetEmployeePin(formData: FormData) {
@@ -448,6 +508,20 @@ export async function createKiosk(formData: FormData) {
   const name = z.string().trim().min(1).max(80).safeParse(formData.get('name'));
   if (!name.success) back('/admin/kiosks', 'Zadaj názov kiosku.');
 
+  // Vlastný kód je voliteľný — prevádzky si ich radi volia podľa pobočky.
+  const rawCode = String(formData.get('pairingCode') ?? '').trim().toUpperCase();
+  let code = generatePairingCode();
+  if (rawCode.length > 0) {
+    const parsedCode = z
+      .string()
+      .regex(/^[A-Z0-9]{4,12}$/)
+      .safeParse(rawCode);
+    if (!parsedCode.success) {
+      back('/admin/kiosks', 'Kód môže mať 4–12 veľkých písmen a číslic.');
+    }
+    code = parsedCode.data;
+  }
+
   const { supabase, tenantId, locationId } = await getScope();
   if (!tenantId || !locationId) back('/admin/kiosks', 'Účet nemá priradenú prevádzku.');
 
@@ -455,8 +529,13 @@ export async function createKiosk(formData: FormData) {
     tenant_id: tenantId,
     location_id: locationId,
     name: name.data,
-    pairing_code: generatePairingCode(),
+    pairing_code: code,
   });
+  // Kód je unikátny naprieč celou platformou — inak by tablet nevedel,
+  // do ktorej prevádzky patrí.
+  if (error?.code === '23505') {
+    back('/admin/kiosks', `Kód ${code} je už použitý, zvoľ iný.`);
+  }
   if (error) back('/admin/kiosks', 'Uloženie zlyhalo.');
 
   revalidatePath('/admin/kiosks');

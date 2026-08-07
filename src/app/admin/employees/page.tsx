@@ -1,5 +1,10 @@
-import { createClient } from '@/lib/supabase/server';
-import { createEmployee, resetEmployeePin, toggleEmployee } from '../manage-actions';
+import { getAdminScope } from '@/lib/admin/scope';
+import {
+  createEmployee,
+  resetEmployeePin,
+  setEmployeeLocations,
+  toggleEmployee,
+} from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,15 +14,24 @@ export default async function EmployeesPage({
   searchParams: Promise<{ msg?: string }>;
 }) {
   const { msg } = await searchParams;
-  const supabase = await createClient();
+  const { supabase, locations, locationName } = await getAdminScope();
 
   const { data: rows } = await supabase
     .from('memberships')
-    .select('id, display_name, active, created_at')
+    .select('id, display_name, active, created_at, membership_locations(location_id)')
     .eq('role', 'employee')
     .order('display_name');
 
-  const employees = rows ?? [];
+  type EmployeeRow = {
+    id: string;
+    display_name: string;
+    active: boolean;
+    created_at: string;
+    membership_locations: { location_id: string }[] | null;
+  };
+
+  const employees = (rows ?? []) as unknown as EmployeeRow[];
+  const locationName_ = locationName;
 
   return (
     <div className="space-y-6">
@@ -67,7 +81,22 @@ export default async function EmployeesPage({
                 key={e.id}
                 className={`flex flex-wrap items-center gap-3 py-3 ${e.active ? '' : 'opacity-50'}`}
               >
-                <p className="min-w-40 flex-1 font-semibold">{e.display_name}</p>
+                <div className="min-w-40 flex-1">
+                  <p className="font-semibold">{e.display_name}</p>
+                  <p className="text-sm text-steel/50">
+                    {(() => {
+                      const ids = new Set(
+                        (e.membership_locations ?? []).map((l) => l.location_id),
+                      );
+                      const names = locations
+                        .filter((l) => ids.has(l.id))
+                        .map((l) => l.name);
+                      return names.length > 0
+                        ? names.join(', ')
+                        : '⚠ bez prevádzky — na tablete sa neobjaví';
+                    })()}
+                  </p>
+                </div>
                 <form action={resetEmployeePin} className="flex items-center gap-2">
                   <input type="hidden" name="id" value={e.id} />
                   <input
@@ -84,6 +113,33 @@ export default async function EmployeesPage({
                     Zmeniť PIN
                   </button>
                 </form>
+                {locations.length > 1 && (
+                  <form action={setEmployeeLocations} className="flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="id" value={e.id} />
+                    {locations.map((l) => {
+                      const assigned = (e.membership_locations ?? []).some(
+                        (ml) => ml.location_id === l.id,
+                      );
+                      return (
+                        <label key={l.id} className="flex items-center gap-1 text-sm">
+                          <input
+                            type="checkbox"
+                            name="locationIds"
+                            value={l.id}
+                            defaultChecked={assigned}
+                          />
+                          {l.name}
+                        </label>
+                      );
+                    })}
+                    <button
+                      type="submit"
+                      className="rounded-lg border border-steel/20 px-3 py-1.5 text-sm hover:bg-frost"
+                    >
+                      Uložiť prevádzky
+                    </button>
+                  </form>
+                )}
                 <form action={toggleEmployee}>
                   <input type="hidden" name="id" value={e.id} />
                   <input type="hidden" name="active" value={String(!e.active)} />
