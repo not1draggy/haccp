@@ -18,9 +18,14 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 - [x] **Offline queue v kiosku (IndexedDB)** vrátane idempotencie cez
       klientske UUID. ⚠️ Neodskúšané za behu v prehliadači.
 - [x] **Rozvrhy a evidencia zmeškaných meraní** cez `pg_cron`.
+- [x] **Limit pokusov na verejné endpointy** — párovanie tabletu a registrácia
+      firmy (`0017`, `0018`). Počítadlo je v DB a per IP; ukladá sa iba hash IP.
 - [ ] **Notifikácia pri zmeškaní** (email/push) — zmeškanie sa dnes zapíše,
       ale nikomu sa neozve; treba zvoliť kanál.
-- [ ] **PDF report za obdobie** — mesačný podklad pre kontrolu.
+- [ ] **PDF report za obdobie** — mesačný podklad pre kontrolu. Dnes je
+      výstupom pre kontrolu iba CSV; PDF zatiaľ v produkte NIE JE.
+- [ ] **Odoslanie pozvánky emailom.** Token sa dnes zobrazí adminovi a ten ho
+      musí preposlať sám — funguje, ale pôsobí nedokončene.
 - [ ] Zapnúť **leaked password protection** v Supabase Auth (Dashboard →
       Authentication → Passwords). Nález bezpečnostného lintera, nedá sa
       spraviť z kódu. Odkedy je registrácia verejná (`/registracia`), heslo
@@ -71,3 +76,17 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
       pri zápise) — každé volanie je jeden bcrypt a dva RPC dotazy navyše.
       Pri desiatkach meraní denne to zatiaľ nevadí, ale pri offline queue
       s dávkovým odosielaním to bude treba prehodnotiť.
+- [ ] **Policy `*_admin_write` sú `FOR ALL`, teda platia aj na SELECT** a
+      zdvojujú sa s `*_read` pri každom čítaní (nález lintera
+      `multiple_permissive_policies`, 8 tabuliek). Oprava znamená rozpísať ich
+      na INSERT/UPDATE/DELETE. Zámerne odložené: úžitok je réžia policy, riziko
+      je bezpečnostná regresia naprieč celou schémou. Robiť až s pokrytím
+      `write_isolation_test.sql`, nie „pri príležitosti".
+- [ ] **`next` má 3 HIGH CVE cez balíky `postcss` a `sharp`**, opraviteľné až
+      prechodom na `next@16` (major). Overené, že v tejto aplikácii nie sú
+      dosiahnuteľné: `next/image` sa nepoužíva (sharp sa nezavolá) a CSS
+      nepochádza od používateľa. Upgrade spraviť samostatne a s E2E testom,
+      nie ako súčasť bezpečnostnej opravy.
+- [ ] **E2E testy chýbajú.** Unit testy pokrývajú vyhodnotenie limitov a CSV,
+      SQL testy izoláciu; kompletný kiosk flow v prehliadači (vrátane offline
+      fronty) zatiaľ neoveruje nič automatické.

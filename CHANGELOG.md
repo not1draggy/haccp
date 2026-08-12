@@ -2,6 +2,78 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-08-12
+
+Bezpečnostný audit celej aplikácie. Každý nález nižšie bol pred opravou
+overený reálnym dotazom pod rolou útočníka; regresné testy sú v
+`supabase/tests/write_isolation_test.sql` (8/8 PASS).
+
+### Bezpečnosť — kritické
+
+- **Admin ktorejkoľvek firmy mohol prepísať a zmazať globálne limity**
+  (migrácia `0016`). Tabuľka `rules` je spoločná pre celú platformu a drží
+  hodnoty, podľa ktorých sa vyhodnocuje meranie každého zákazníka; policy
+  však vyžadovala iba rolu `tenant_admin`, bez akéhokoľvek scopingu. Overené:
+  UPDATE aj DELETE prešli. Následok by bol tichý — meranie by sa naďalej
+  zapisovalo, len podľa podvrhnutého limitu, takže presne to, čo má denník
+  pri kontrole dokazovať, by prestalo platiť. Limity sú legislatíva, nie
+  zákaznícke nastavenie: cez API ich už nemení nikto, menia sa migráciou.
+- **Pozvánka sa dala použiť na prevzatie cudzieho účtu.** `acceptInvitation`
+  prepisovalo heslo, ak účet s daným emailom už existoval. Email pozvánky si
+  volí pozývajúci admin, takže stačilo pozvať adresu admina inej firmy,
+  odkaz si otvoriť a nastaviť mu heslo. Pozvánka odteraz udeľuje prístup
+  k firme, ale nikdy nemení prihlasovacie údaje; majiteľ existujúceho účtu
+  sa prihlási svojím heslom.
+
+### Bezpečnosť — vysoké
+
+- **PIN sa neoveroval voči prevádzke.** Zoznam mien na tablete filtrovaný bol,
+  zápis nie — `membershipId` chodí od klienta, takže tablet pobočky A sa vedel
+  podpísať pod meranie menom pracovníka pobočky B.
+- **Párovanie tabletu nemalo limit pokusov** (`0017`). Kód je jediná prekážka
+  medzi útočníkom a prevádzkou a úspešné uhádnutie navyše odpojí tablet
+  v kuchyni, takže meranie ticho prestane fungovať. Limit je per IP, ukladá
+  sa iba SHA-256 hash IP. Minimálna dĺžka vlastného kódu zvýšená na 6 znakov.
+- **Registrácia firmy bola verejný endpoint bez limitu** (`0018`) — skriptom
+  sa dal vyrobiť ľubovoľný počet firiem aj auth účtov.
+- **Rozvrh sa dal naviazať na zariadenie cudzej firmy** (`0016`).
+- **`pin_clear_attempts` neoverovala firmu** (`0018`) — admin vedel nulovať
+  počítadlo neúspešných PIN-ov cudzej firme a tým obísť ochranu proti
+  hádaniu PIN-u.
+- **Merania sa dali zapísať aj z administrácie** (`0016`). Aplikácia tak
+  merania nikdy nezapisovala (jediná cesta je kiosk cez service role), takže
+  policy bola len útočná plocha: umožňovala doplniť denník bez PIN-u
+  pracovníka. Meranie má vzniknúť pri zariadení, nie v kancelárii.
+- **Vzorce v CSV exporte.** Názvy zariadení a texty opatrení píše používateľ;
+  bunka začínajúca `=`, `+`, `-` alebo `@` sa v Exceli vyhodnotí ako vzorec
+  a spustí sa na počítači toho, kto export otvorí — spravidla vedúceho alebo
+  kontrolóra. Záporné teploty zostávajú číslami.
+- Párovací kód sa generoval cez `Math.random()`, ktorý na bezpečnostný token
+  nie je určený. Nahradené `crypto.randomInt`.
+
+### Opravené
+
+- **Limit sa v deň zmeny pravidla vyhodnocoval rozdielne v aplikácii a v DB.**
+  Aplikácia brala pravidlo ako platné do `valid_to > dnes`, databáza do
+  `valid_to >= dnes`. V deň prechodu na nový limit tak tablet mohol ukazovať
+  iný stav, než aký sa zapísal do denníka.
+- Vyhodnotenie limitu existovalo v troch kópiách (kiosk zápis, kiosk
+  vykreslenie, DB trigger). Zjednotené do `src/lib/haccp/limits.ts` krytého
+  testami; autoritatívny zostáva DB trigger.
+- 404 stránka po slovensky — Next.js dovtedy ukazoval vlastnú anglickú hlášku.
+
+### Pridané
+
+- **Testy.** Projekt dovtedy nemal žiadny test runner. Pribudol `vitest`
+  a 32 unit testov na vyhodnotenie limitov a CSV export, plus SQL regresný
+  test izolácie zápisov.
+- **`/api/health`** — overuje aj spojenie s databázou, nielen že proces beží.
+  Bez detailov o chybe v odpovedi, tie zostávajú v logu servera.
+- Indexy na cesty, ktoré rastú s prevádzkou (`0019`), predovšetkým
+  `memberships.user_id` — ním hľadá `current_tenant_id()` členstvo pri každej
+  kontrole RLS bez JWT claimu.
+- Zálohovanie, obnova a postup overenia po nasadení v `README.md`.
+
 ## [0.5.0] — 2026-08-07
 
 ### Anonymita medzi pobočkami

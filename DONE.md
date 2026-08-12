@@ -2,6 +2,29 @@
 
 Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 
+## Sprint: bezpečnostný audit pred predajom
+
+Každý nález overený reálnym dotazom pod rolou útočníka pred opravou aj po nej.
+
+- [x] Globálne limity (`rules`) sa nedajú meniť cez API — dovtedy ich mohol
+      prepísať aj zmazať admin ktorejkoľvek firmy
+- [x] Pozvánka už neprepisuje heslo existujúceho účtu (prevzatie cudzieho konta)
+- [x] PIN sa overuje aj voči prevádzke, nielen firme
+- [x] Limit pokusov na párovanie tabletu a na registráciu firmy
+- [x] `pin_clear_attempts` overuje firmu volajúceho
+- [x] Rozvrh sa nedá naviazať na zariadenie cudzej firmy
+- [x] Merania sa nedajú zapísať mimo kiosku (bez PIN-u pracovníka)
+- [x] Neutralizované vzorce v CSV exporte, čísla zostali číslami
+- [x] Párovací kód cez `crypto.randomInt`, minimálne 6 znakov
+- [x] Zjednotená platnosť pravidla medzi aplikáciou a DB (`valid_to >= dnes`)
+- [x] Vyhodnotenie limitu v jednom module namiesto troch kópií
+- [x] Prvé testy v projekte: `vitest`, 32 unit testov
+- [x] Regresný SQL test izolácie zápisov (8/8 PASS, self-contained)
+- [x] `/api/health` vrátane kontroly spojenia s DB
+- [x] Indexy na horúce cesty, slovenská 404, zálohovanie v README
+- [ ] Zapnúť leaked password protection (Supabase Dashboard, nedá sa z kódu)
+- [ ] Právna verifikácia limitov (externý odborník)
+
 ## Sprint: anonymita pobočiek a revízia aplikácie
 
 - [x] Zamestnanci viazaní na prevádzky (`membership_locations`)
