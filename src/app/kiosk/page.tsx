@@ -1,5 +1,6 @@
 import { getKioskSession } from '@/lib/kiosk/session';
 import { createServiceClient } from '@/lib/supabase/service';
+import { resolveLimits } from '@/lib/haccp/limits';
 import KioskFlow, { type KioskDevice, type KioskEmployee } from './KioskFlow';
 import PairForm from './PairForm';
 
@@ -43,7 +44,7 @@ export default async function KioskPage() {
       .from('rules')
       .select('device_type_id, min_c, max_c, valid_from')
       .lte('valid_from', todayIso)
-      .or(`valid_to.is.null,valid_to.gt.${todayIso}`)
+      .or(`valid_to.is.null,valid_to.gte.${todayIso}`)
       .order('valid_from', { ascending: false }),
     supabase
       .from('measurements')
@@ -92,12 +93,13 @@ export default async function KioskPage() {
     const history = historyByDevice.get(d.id) ?? [];
     const last = history[0];
     const prev = history[1];
+    const { minC, maxC } = resolveLimits(d, rule);
     return {
       id: d.id,
       name: d.name,
       type_name: type?.name ?? '',
-      minC: d.min_c != null ? Number(d.min_c) : rule?.min_c != null ? Number(rule.min_c) : null,
-      maxC: d.max_c != null ? Number(d.max_c) : rule?.max_c != null ? Number(rule.max_c) : null,
+      minC,
+      maxC,
       lastValue: last ? Number(last.value_c) : null,
       prevValue: prev ? Number(prev.value_c) : null,
       lastStatus: last?.status ?? null,

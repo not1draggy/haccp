@@ -52,6 +52,8 @@ export async function acceptInvitation(formData: FormData) {
   });
 
   let userId = created?.user?.id ?? null;
+  // Rozlišujeme, či účet vznikol teraz — existujúcemu sa heslo NESMIE dotknúť.
+  const isNewAccount = userId != null;
 
   if (createError) {
     // Účet s týmto emailom už existuje — pozvánku naviažeme naň.
@@ -68,7 +70,11 @@ export async function acceptInvitation(formData: FormData) {
     if (!userId) {
       redirect(`/invite/${parsed.data.token}?error=account`);
     }
-    await admin.auth.admin.updateUserById(userId, { password: parsed.data.password });
+    // Heslo existujúceho účtu sa zámerne NEPREPISUJE. Email pozvánky si volí
+    // pozývajúci admin, takže prepis by z pozvánky spravil nástroj na
+    // prevzatie cudzieho konta: stačilo by pozvať adresu admina inej firmy,
+    // odkaz si otvoriť sám a nastaviť mu heslo. Pozvánka udeľuje prístup
+    // k firme, nemení prihlasovacie údaje.
   }
 
   const { error: membershipError } = await admin.from('memberships').insert({
@@ -88,6 +94,12 @@ export async function acceptInvitation(formData: FormData) {
     .from('invitations')
     .update({ accepted_at: new Date().toISOString(), accepted_by: userId })
     .eq('id', invite.id);
+
+  // Prihlásiť sa dá len ten, komu sme účet práve založili — jeho heslo
+  // poznáme z formulára. Majiteľ existujúceho účtu sa prihlási svojím.
+  if (!isNewAccount) {
+    redirect('/login?msg=invite-existing');
+  }
 
   const supabase = await createClient();
   await supabase.auth.signInWithPassword({

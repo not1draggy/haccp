@@ -44,7 +44,7 @@ export default async function DevicesPage({
       .from('rules')
       .select('device_type_id, min_c, max_c, valid_from')
       .lte('valid_from', todayIso)
-      .or(`valid_to.is.null,valid_to.gt.${todayIso}`)
+      .or(`valid_to.is.null,valid_to.gte.${todayIso}`)
       .order('valid_from', { ascending: false }),
   ]);
 

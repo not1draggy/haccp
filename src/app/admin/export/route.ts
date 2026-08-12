@@ -1,5 +1,6 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
+import { CSV_BOM, csvRow } from '@/lib/export/csv';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,19 +12,6 @@ type ExportRow = {
   memberships: { display_name: string } | null;
   corrective_actions: { action: string; created_at: string }[] | null;
 };
-
-/**
- * Excel v slovenskom locale očakáva bodkočiarku ako oddeľovač a bez BOM
- * zobrazí diakritiku ako "ChladniÄka". Oboje je tu zámerné.
- */
-const DELIMITER = ';';
-const BOM = '﻿';
-
-function csvCell(value: string | number | null | undefined): string {
-  if (value == null) return '';
-  const s = String(value);
-  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('sk-SK', {
@@ -88,9 +76,9 @@ export async function GET(request: Request) {
   ];
 
   const lines = [
-    header.map(csvCell).join(DELIMITER),
+    csvRow(header),
     ...rows.map((r) =>
-      [
+      csvRow([
         formatDateTime(r.measured_at),
         r.devices?.name ?? '',
         // Desatinná čiarka — sk Excel inak číslo neinterpretuje ako číslo.
@@ -100,9 +88,7 @@ export async function GET(request: Request) {
         (r.corrective_actions ?? [])
           .map((a) => `${formatDateTime(a.created_at)}: ${a.action}`)
           .join(' | '),
-      ]
-        .map(csvCell)
-        .join(DELIMITER),
+      ]),
     ),
   ];
 
@@ -110,7 +96,7 @@ export async function GET(request: Request) {
     .toISOString()
     .slice(0, 10)}.csv`;
 
-  return new Response(BOM + lines.join('\r\n'), {
+  return new Response(CSV_BOM + lines.join('\r\n'), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${filename}"`,

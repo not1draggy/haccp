@@ -1,6 +1,7 @@
 'use server';
 
 import bcrypt from 'bcryptjs';
+import { headers } from 'next/headers';
 import { z } from 'zod';
 import {
   generateKioskToken,
@@ -9,6 +10,7 @@ import {
   sha256Hex,
 } from '@/lib/kiosk/session';
 import { createServiceClient } from '@/lib/supabase/service';
+import { evaluateStatus, resolveLimits } from '@/lib/haccp/limits';
 
 // Všetky kiosk actions bežia so service role — tenant/location scoping
 // sa preto VŽDY odvodzuje z device tokenu (getKioskSession), nikdy z klienta.
@@ -17,6 +19,20 @@ const pairSchema = z.object({
   code: z.string().trim().min(4).max(32),
 });
 
+/**
+ * Hash IP volajúceho pre počítadlo pokusov o párovanie. Ukladá sa hash, nie
+ * IP — na limit to stačí a denník sa nestáva evidenciou pripojení.
+ * Bez hlavičky (lokálny beh) padáme na spoločný kľúč, takže limit stále platí.
+ */
+async function clientIpHash(): Promise<string> {
+  const h = await headers();
+  const ip =
+    h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    h.get('x-real-ip')?.trim() ||
+    'unknown';
+  return sha256Hex(ip);
+}
+
 export async function pairKiosk(input: { code: string }) {
   const parsed = pairSchema.safeParse(input);
   if (!parsed.success) {
@@ -24,6 +40,20 @@ export async function pairKiosk(input: { code: string }) {
   }
 
   const supabase = createServiceClient();
+
+  // Kód je jediná prekážka medzi útočníkom a prevádzkou a úspešné uhádnutie
+  // navyše odpojí tablet v kuchyni — hádanie preto musí byť obmedzené.
+  const ipHash = await clientIpHash();
+  const { data: locked } = await supabase.rpc('pairing_locked_seconds', {
+    p_ip_hash: ipHash,
+  });
+  if (typeof locked === 'number' && locked > 0) {
+    return {
+      ok: false as const,
+      error: `Príliš veľa pokusov. Skús o ${Math.ceil(locked / 60)} min.`,
+    };
+  }
+
   const { data: kiosk } = await supabase
     .from('kiosk_devices')
     .select('id')
@@ -32,6 +62,10 @@ export async function pairKiosk(input: { code: string }) {
     .maybeSingle();
 
   if (!kiosk) {
+    await supabase.rpc('pairing_record_attempt', {
+      p_ip_hash: ipHash,
+      p_success: false,
+    });
     return { ok: false as const, error: 'Neznámy párovací kód.' };
   }
 
@@ -50,6 +84,7 @@ export async function pairKiosk(input: { code: string }) {
     return { ok: false as const, error: 'Párovanie zlyhalo, skús znova.' };
   }
 
+  await supabase.rpc('pairing_record_attempt', { p_ip_hash: ipHash, p_success: true });
   await setKioskCookie(token);
   return { ok: true as const };
 }
@@ -72,9 +107,14 @@ function lockoutMessage(seconds: number): string {
  * Overí PIN a zároveň udržiava limit pokusov. 4-miestny PIN má len 10 000
  * kombinácií, takže bez obmedzenia je uhádnuteľný hrubou silou. Limit je
  * v DB, pretože serverless inštancie nezdieľajú pamäť.
+ *
+ * Filtrovanie podľa prevádzky patrí SEM, nie len do zoznamu na tablete:
+ * membershipId chodí od klienta, takže bez tejto kontroly by sa tablet
+ * pobočky A vedel podpísať pod meranie menom pracovníka pobočky B.
  */
 async function verifyEmployeePin(
   tenantId: string,
+  locationId: string,
   kioskId: string,
   membershipId: string,
   pin: string,
@@ -92,11 +132,12 @@ async function verifyEmployeePin(
 
   const { data: member } = await supabase
     .from('memberships')
-    .select('id, display_name, pin_hash')
+    .select('id, display_name, pin_hash, membership_locations!inner(location_id)')
     .eq('id', membershipId)
     .eq('tenant_id', tenantId)
     .eq('role', 'employee')
     .eq('active', true)
+    .eq('membership_locations.location_id', locationId)
     .maybeSingle();
 
   const valid = member?.pin_hash ? await bcrypt.compare(pin, member.pin_hash) : false;
@@ -128,6 +169,7 @@ export async function verifyPin(input: { membershipId: string; pin: string }) {
 
   const check = await verifyEmployeePin(
     session.tenantId,
+    session.locationId,
     session.kioskId,
     parsed.data.membershipId,
     parsed.data.pin,
@@ -179,6 +221,7 @@ export async function submitMeasurement(input: {
   // PIN sa overuje aj pri zápise — autorizácia sa nespolieha na klientsky stav.
   const check = await verifyEmployeePin(
     session.tenantId,
+    session.locationId,
     session.kioskId,
     parsed.data.membershipId,
     parsed.data.pin,
@@ -209,28 +252,14 @@ export async function submitMeasurement(input: {
     .select('id, min_c, max_c')
     .eq('device_type_id', device.device_type_id)
     .lte('valid_from', todayIso)
-    .or(`valid_to.is.null,valid_to.gt.${todayIso}`)
+    .or(`valid_to.is.null,valid_to.gte.${todayIso}`)
     .order('valid_from', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   // Limit zariadenia (nastavený adminom) má prednosť pred globálnym pravidlom.
-  const minC =
-    device.min_c != null
-      ? Number(device.min_c)
-      : rule?.min_c != null
-        ? Number(rule.min_c)
-        : null;
-  const maxC =
-    device.max_c != null
-      ? Number(device.max_c)
-      : rule?.max_c != null
-        ? Number(rule.max_c)
-        : null;
-  const outOfRange =
-    (minC != null && parsed.data.valueC < minC) ||
-    (maxC != null && parsed.data.valueC > maxC);
-  const status: 'ok' | 'alarm' = outOfRange ? 'alarm' : 'ok';
+  const { minC, maxC } = resolveLimits(device, rule);
+  const status = evaluateStatus(parsed.data.valueC, { minC, maxC });
 
   const { error } = await supabase.from('measurements').insert({
     tenant_id: session.tenantId,
@@ -293,6 +322,7 @@ export async function skipCheck(input: {
 
   const check = await verifyEmployeePin(
     session.tenantId,
+    session.locationId,
     session.kioskId,
     parsed.data.membershipId,
     parsed.data.pin,

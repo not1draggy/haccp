@@ -1,6 +1,6 @@
 'use server';
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
@@ -40,12 +40,16 @@ function back(path: string, msg?: string): never {
 /**
  * Párovací kód tabletu. Vynechané sú znaky, ktoré si personál pri prepisovaní
  * z papiera mýli (0/O, 1/I/L) — kód sa diktuje cez kuchyňu, nie kopíruje.
+ *
+ * randomInt, nie Math.random: kód je jediný údaj, ktorým sa tablet autorizuje
+ * do prevádzky, takže musí byť nepredvídateľný. Math.random na to nie je
+ * určený — zo série hodnôt sa dá stav generátora odvodiť.
  */
 function generatePairingCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    code += alphabet[randomInt(alphabet.length)];
   }
   return code;
 }
@@ -580,15 +584,17 @@ export async function createKiosk(formData: FormData) {
   if (!name.success) back('/admin/kiosks', 'Zadaj názov kiosku.');
 
   // Vlastný kód je voliteľný — prevádzky si ich radi volia podľa pobočky.
+  // Minimum je 6 znakov: štvorznakový kód má 1,6 mil. kombinácií, čo je pri
+  // distribuovanom hádaní (limit je per IP) v dosahu.
   const rawCode = String(formData.get('pairingCode') ?? '').trim().toUpperCase();
   let code = '';
   if (rawCode.length > 0) {
     const parsedCode = z
       .string()
-      .regex(/^[A-Z0-9]{4,12}$/)
+      .regex(/^[A-Z0-9]{6,12}$/)
       .safeParse(rawCode);
     if (!parsedCode.success) {
-      back('/admin/kiosks', 'Kód môže mať 4–12 veľkých písmen a číslic.');
+      back('/admin/kiosks', 'Kód môže mať 6–12 veľkých písmen a číslic.');
     }
     code = parsedCode.data;
   }

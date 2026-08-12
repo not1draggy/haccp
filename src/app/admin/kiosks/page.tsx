@@ -38,7 +38,7 @@ export default async function KiosksPage({
           />
           <input
             name="pairingCode"
-            pattern="[A-Za-z0-9]{4,12}"
+            pattern="[A-Za-z0-9]{6,12}"
             aria-label="Vlastný párovací kód (voliteľné)"
             placeholder="Kód (voliteľné)"
             className="rounded-lg border border-steel/20 px-3 py-2 font-mono uppercase focus:border-steel focus:outline-none"
