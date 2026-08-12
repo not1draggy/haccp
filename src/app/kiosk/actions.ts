@@ -1,7 +1,6 @@
 'use server';
 
 import bcrypt from 'bcryptjs';
-import { headers } from 'next/headers';
 import { z } from 'zod';
 import {
   generateKioskToken,
@@ -11,6 +10,7 @@ import {
 } from '@/lib/kiosk/session';
 import { createServiceClient } from '@/lib/supabase/service';
 import { evaluateStatus, resolveLimits } from '@/lib/haccp/limits';
+import { checkRateLimit, lockedMinutes } from '@/lib/rate-limit';
 
 // Všetky kiosk actions bežia so service role — tenant/location scoping
 // sa preto VŽDY odvodzuje z device tokenu (getKioskSession), nikdy z klienta.
@@ -18,20 +18,6 @@ import { evaluateStatus, resolveLimits } from '@/lib/haccp/limits';
 const pairSchema = z.object({
   code: z.string().trim().min(4).max(32),
 });
-
-/**
- * Hash IP volajúceho pre počítadlo pokusov o párovanie. Ukladá sa hash, nie
- * IP — na limit to stačí a denník sa nestáva evidenciou pripojení.
- * Bez hlavičky (lokálny beh) padáme na spoločný kľúč, takže limit stále platí.
- */
-async function clientIpHash(): Promise<string> {
-  const h = await headers();
-  const ip =
-    h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    h.get('x-real-ip')?.trim() ||
-    'unknown';
-  return sha256Hex(ip);
-}
 
 export async function pairKiosk(input: { code: string }) {
   const parsed = pairSchema.safeParse(input);
@@ -43,14 +29,11 @@ export async function pairKiosk(input: { code: string }) {
 
   // Kód je jediná prekážka medzi útočníkom a prevádzkou a úspešné uhádnutie
   // navyše odpojí tablet v kuchyni — hádanie preto musí byť obmedzené.
-  const ipHash = await clientIpHash();
-  const { data: locked } = await supabase.rpc('pairing_locked_seconds', {
-    p_ip_hash: ipHash,
-  });
-  if (typeof locked === 'number' && locked > 0) {
+  const limit = await checkRateLimit('pairing');
+  if (limit.lockedSeconds > 0) {
     return {
       ok: false as const,
-      error: `Príliš veľa pokusov. Skús o ${Math.ceil(locked / 60)} min.`,
+      error: `Príliš veľa pokusov. Skús o ${lockedMinutes(limit.lockedSeconds)} min.`,
     };
   }
 
@@ -62,10 +45,7 @@ export async function pairKiosk(input: { code: string }) {
     .maybeSingle();
 
   if (!kiosk) {
-    await supabase.rpc('pairing_record_attempt', {
-      p_ip_hash: ipHash,
-      p_success: false,
-    });
+    await limit.record(false);
     return { ok: false as const, error: 'Neznámy párovací kód.' };
   }
 
@@ -84,7 +64,7 @@ export async function pairKiosk(input: { code: string }) {
     return { ok: false as const, error: 'Párovanie zlyhalo, skús znova.' };
   }
 
-  await supabase.rpc('pairing_record_attempt', { p_ip_hash: ipHash, p_success: true });
+  await limit.record(true);
   await setKioskCookie(token);
   return { ok: true as const };
 }

@@ -23,7 +23,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind · Supabase (Postgres + Auth) 
 
 1. Vytvor projekt na [supabase.com](https://supabase.com) (región `eu-central-1`).
 2. SQL Editor → spusti migrácie z `supabase/migrations/` **v poradí**:
-   `0001` až `0014` (poradie je dôležité — neskoršie stavajú na skorších).
+   `0001` až `0018` (poradie je dôležité — neskoršie stavajú na skorších).
 3. *(Odporúčané, nie povinné)* **Authentication → Hooks → Customize Access
    Token (JWT) Claims** → schéma `public`, funkcia `custom_access_token_hook`.
    Hook vloží `tenant_id` priamo do tokenu a ušetrí jeden dotaz pri každej
@@ -48,27 +48,25 @@ git push               # repo pripojené na Vercel
 # alebo: npx vercel --prod
 ```
 
-### 4. Onboarding prvého tenanta (SQL Editor)
+### 4. Onboarding prvého tenanta
 
-```sql
--- Firma + prvá prevádzka
-insert into tenants (id, name) values
-  ('11111111-1111-1111-1111-111111111111', 'Názov firmy');
+Otvor `/registracia` a vyplň formulár. Vznikne naraz účet, firma, prvá
+prevádzka, jej tablet aj členstvo admina — **zásah do databázy netreba**.
 
-insert into locations (id, tenant_id, name) values
-  ('22222222-2222-2222-2222-222222222222',
-   '11111111-1111-1111-1111-111111111111', 'Hlavná prevádzka');
+Zvyšok už pridávaš v administrácii — vrátane názvu firmy, ďalších prevádzok
+(tablet a párovací kód sa vytvoria automaticky), zariadení, zamestnancov
+a rozvrhov.
 
--- Admin: najprv vytvor používateľa v Authentication → Users (email+heslo),
--- skopíruj jeho UUID a vlož sem:
-insert into memberships (tenant_id, user_id, role, display_name) values
-  ('11111111-1111-1111-1111-111111111111',
-   'AUTH_USER_UUID', 'tenant_admin', 'Meno správcu');
+### 4b. Overenie po nasadení
+
+```bash
+curl -s https://tvoja-domena.sk/api/health
+# {"status":"ok","checks":{"app":"ok","database":"ok","config":"ok"},...}
 ```
 
-Zvyšok už pridávaš **v administrácii**, nie cez SQL — vrátane názvu firmy,
-ďalších prevádzok (tablet a párovací kód sa vytvoria automaticky), zariadení,
-zamestnancov a rozvrhov.
+Vráti `503` a `"status":"degraded"`, ak chýba premenná prostredia alebo
+nefunguje spojenie s databázou. Vhodné ako endpoint pre monitoring —
+appka bez DB vyzerá zvonku živá, ale kuchyňa cez ňu nezapíše ani meranie.
 
 ### 5. Spustenie kiosku
 
@@ -95,14 +93,42 @@ Admin rozhranie: `/login` → `/admin`.
 - **Audit**: každá mutácia governed tabuliek → `audit_log`, do ktorého sa
   nedá písať priamo.
 
+## Zálohovanie a obnova
+
+Merania sú append-only a tvoria podklad pre kontrolu — ich strata sa nedá
+nahradiť dodatočným zápisom. Pred ostrou prevádzkou over v Supabase
+(Database → Backups):
+
+- **Denné zálohy** sú na pláne Free len 7 dní a **bez Point-in-Time
+  Recovery**. Pre platiacich zákazníkov je potrebný aspoň plán Pro s PITR —
+  bez neho sa dá vrátiť nanajvýš na včerajšok.
+- **Obnovu si raz vyskúšaj** na kópii projektu. Záloha, ktorú nikto nikdy
+  neobnovil, je predpoklad, nie záloha.
+- `audit_log`, `measurements` a `corrective_actions` sú nemenné; obnova sa
+  preto robí vždy na úrovni celej databázy, nie jednotlivých riadkov.
+
 ## Vývoj
 
 ```bash
 npm install
 npm run dev
+npm test            # unit testy (vitest)
 npm run typecheck   # musí prejsť pred commitom
 npm run build       # musí prejsť pred commitom
 ```
+
+### Bezpečnostné testy (SQL)
+
+Skripty v `supabase/tests/` sa spúšťajú v SQL Editore, bežia v transakcii
+ukončenej ROLLBACKom a v DB po nich nič nezostane:
+
+| Súbor | Čo overuje |
+| --- | --- |
+| `rls_isolation_test.sql` | Že firma nevidí dáta inej firmy (čítanie). Pred spustením treba doplniť dve UUID. |
+| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov). Self-contained, netreba nič upravovať. |
+
+Po každej zmene schémy spusti oba a zároveň `get_advisors` (security aj
+performance).
 
 Pracovné režimy sú v `.claude/commands/` (`/continue`, `/audit`, `/bugfix`,
 `/review`, `/refactor`, `/plan`, `/docs`, `/release`).
@@ -118,5 +144,15 @@ alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline.
 Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · E2E testy
 v CI · adminovia obmedzení na jednu prevádzku.
 
-⚠️ Limity v seede (`0002`) sú štandardné SK/EU hodnoty, ale **pred predajom
-vyžadujú právnu verifikáciu** a doplnenie `legal_ref` citácií.
+### Pred predajom prvému zákazníkovi
+
+Tri veci, ktoré sa nedajú vyriešiť kódom a musí ich niekto rozhodnúť:
+
+1. ⚠️ **Právna verifikácia limitov.** Hodnoty v seede (`0002`) sú štandardné
+   SK/EU teploty, ale nemajú doplnené `legal_ref` citácie a neprešli
+   kontrolou odborníka. Denník, ktorý vyhodnocuje podľa neoverených limitov,
+   je pri kontrole napadnuteľný.
+2. **Zapnúť leaked password protection** (Authentication → Passwords).
+   Odkedy je registrácia verejná, heslo si volí zákazník a jediná kontrola
+   je minimálna dĺžka 8 znakov.
+3. **Zálohovanie s PITR** podľa sekcie vyššie.

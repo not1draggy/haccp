@@ -7,6 +7,7 @@ const ERRORS: Record<string, string> = {
   invalid: 'Skontroluj vyplnené polia — heslo musí mať aspoň 8 znakov.',
   email: 'Účet s týmto emailom už existuje. Prihlás sa alebo si nechaj poslať pozvánku.',
   tenant: 'Firmu sa nepodarilo založiť. Skús to prosím znova.',
+  limit: 'Príliš veľa pokusov o registráciu. Skús to prosím o hodinu.',
 };
 
 const FIELD =

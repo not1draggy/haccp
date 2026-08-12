@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 const signUpSchema = z.object({
   company: z.string().trim().min(2).max(120),
@@ -36,6 +37,11 @@ export async function signUp(formData: FormData) {
   });
   if (!parsed.success) fail('invalid');
 
+  // Verejný endpoint bez session, ktorý zakladá auth účet aj firmu — bez
+  // limitu sa dá skriptom vyrobiť ľubovoľný počet firiem.
+  const limit = await checkRateLimit('signup');
+  if (limit.lockedSeconds > 0) fail('limit');
+
   const { company, location, displayName, email, password } = parsed.data;
   const admin = createServiceClient();
 
@@ -48,6 +54,7 @@ export async function signUp(formData: FormData) {
   if (createError || !created?.user) {
     // Existujúci email neriešime prevzatím účtu — to by z registračného
     // formulára spravilo nástroj na prepísanie cudzieho hesla.
+    await limit.record(false);
     fail('email');
   }
 
@@ -64,8 +71,11 @@ export async function signUp(formData: FormData) {
     // Firma nevznikla (funkcia je jedna transakcia), takže po čerstvom účte
     // ostal len prázdny používateľ — zmažeme ho, aby sa dal email použiť znova.
     await admin.auth.admin.deleteUser(created.user.id);
+    await limit.record(false);
     fail('tenant');
   }
+
+  await limit.record(true);
 
   const supabase = await createClient();
   const { error: signInError } = await supabase.auth.signInWithPassword({
