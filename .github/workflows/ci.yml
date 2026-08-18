@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  kvalita:
+    name: Typecheck, unit testy, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          # Build potrebuje premenné, ale nie funkčnú DB — hodnoty sú placeholder.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: build-placeholder
+
+  e2e:
+    name: E2E (kiosk flow v prehliadači)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Jednorazová databáza. Merania sú append-only a nedajú sa zmazať,
+      # takže E2E testy nesmú bežať proti ostrému projektu — testovacie
+      # záznamy by navždy zostali v audite zákazníka.
+      - name: Spustiť lokálny Supabase
+        run: supabase start -x studio,realtime,storage-api,imgproxy,logflare,vector,supavisor,edge-runtime
+
+      # `supabase status -o env` vracia hodnoty v úvodzovkách; do GITHUB_ENV
+      # sa musia dostať bez nich, inak sa úvodzovky stanú súčasťou kľúča.
+      - name: Načítať prístupové údaje lokálneho stacku
+        run: supabase status -o env | tr -d '"' | sed 's/^/E2E_/' >> "$GITHUB_ENV"
+
+      # PASS/FAIL sú v tomto skripte dáta, nie chyby SQL — bez tejto kontroly
+      # by regresia v izolácii firiem prešla CI ako úspech.
+      - name: Overiť izoláciu firiem (SQL regresné testy)
+        run: |
+          psql "$E2E_DB_URL" -v ON_ERROR_STOP=1 \
+            -f supabase/tests/write_isolation_test.sql | tee /tmp/rls.txt
+          if grep -q FAIL /tmp/rls.txt; then
+            echo "::error::Regresia v izolácii firiem"
+            exit 1
+          fi
+
+      - name: Nainštalovať prehliadač pre Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SERVICE_ROLE_KEY }}
+
+      - name: Playwright
+        run: npx playwright test
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SERVICE_ROLE_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

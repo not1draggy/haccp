@@ -12,6 +12,7 @@ kiosk režim pre kuchyňu, izolácia medzi pobočkami.
 | `DONE.md` | Aktuálny sprint a hotové položky |
 | `CHANGELOG.md` | História zmien |
 | `docs/ARCHITECTURE.md` | Architektúra a zdôvodnenie rozhodnutí |
+| `docs/LIMITY-NA-OVERENIE.md` | Podklad pre právnu verifikáciu limitov |
 
 ## Stack
 
@@ -23,7 +24,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind · Supabase (Postgres + Auth) 
 
 1. Vytvor projekt na [supabase.com](https://supabase.com) (región `eu-central-1`).
 2. SQL Editor → spusti migrácie z `supabase/migrations/` **v poradí**:
-   `0001` až `0018` (poradie je dôležité — neskoršie stavajú na skorších).
+   `0001` až `0019` (poradie je dôležité — neskoršie stavajú na skorších).
 3. *(Odporúčané, nie povinné)* **Authentication → Hooks → Customize Access
    Token (JWT) Claims** → schéma `public`, funkcia `custom_access_token_hook`.
    Hook vloží `tenant_id` priamo do tokenu a ušetrí jeden dotaz pri každej
@@ -117,6 +118,29 @@ npm run typecheck   # musí prejsť pred commitom
 npm run build       # musí prejsť pred commitom
 ```
 
+### E2E testy (Playwright)
+
+Kiosk flow je jediná cesta, ktorou v produkte vzniká meranie, takže ho
+overujeme v skutočnom prehliadači — vrátane tabletového viewportu a výpadku
+pripojenia.
+
+```bash
+npx supabase start   # jednorazová DB, sama načíta migrácie aj supabase/seed.sql
+npm run build
+npm run test:e2e     # alebo: npm run test:e2e:ui
+```
+
+> ⚠️ **Nikdy nespúšťaj E2E proti ostrému projektu.** Testy zapisujú merania,
+> ktoré sú append-only a nedajú sa zmazať — testovacie záznamy by navždy
+> zostali v audite zákazníka.
+
+Seed (`supabase/seed.sql`) vytvára firmu s dvoma prevádzkami, párovacím kódom
+`E2ETEST` a PIN-om `4321`. Druhá prevádzka je tam zámerne — testy overujú, že
+sa jej zamestnanci ani zariadenia na tablete prvej prevádzky **neobjavia**.
+
+Všetko spolu beží aj v CI (`.github/workflows/ci.yml`): typecheck, unit testy,
+build, SQL testy izolácie a E2E nad čerstvou databázou.
+
 ### Bezpečnostné testy (SQL)
 
 Skripty v `supabase/tests/` sa spúšťajú v SQL Editore, bežia v transakcii
@@ -125,7 +149,7 @@ ukončenej ROLLBACKom a v DB po nich nič nezostane:
 | Súbor | Čo overuje |
 | --- | --- |
 | `rls_isolation_test.sql` | Že firma nevidí dáta inej firmy (čítanie). Pred spustením treba doplniť dve UUID. |
-| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov). Self-contained, netreba nič upravovať. |
+| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov). Self-contained, netreba nič upravovať. Beží aj v CI. |
 
 Po každej zmene schémy spusti oba a zároveň `get_advisors` (security aj
 performance).
@@ -139,10 +163,11 @@ Hotové: schéma + RLS + audit + verzované pravidlá, kiosk flow bez prerušova
 PIN-om, offline fronta meraní, rate limiting PIN-u, rozvrhy a evidencia
 zmeškaných kontrol, viac prevádzok s izoláciou medzi nimi, pozvánky adminov,
 kompletná administrácia (zariadenia, limity, zamestnanci, kiosky, história),
-alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline.
+alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline,
+unit + E2E + SQL testy v CI.
 
-Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · E2E testy
-v CI · adminovia obmedzení na jednu prevádzku.
+Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · notifikácie
+pri zmeškaní · adminovia obmedzení na jednu prevádzku.
 
 ### Pred predajom prvému zákazníkovi
 
@@ -151,7 +176,8 @@ Tri veci, ktoré sa nedajú vyriešiť kódom a musí ich niekto rozhodnúť:
 1. ⚠️ **Právna verifikácia limitov.** Hodnoty v seede (`0002`) sú štandardné
    SK/EU teploty, ale nemajú doplnené `legal_ref` citácie a neprešli
    kontrolou odborníka. Denník, ktorý vyhodnocuje podľa neoverených limitov,
-   je pri kontrole napadnuteľný.
+   je pri kontrole napadnuteľný. Podklad pre odborníka je pripravený
+   v `docs/LIMITY-NA-OVERENIE.md`.
 2. **Zapnúť leaked password protection** (Authentication → Passwords).
    Odkedy je registrácia verejná, heslo si volí zákazník a jediná kontrola
    je minimálna dĺžka 8 znakov.

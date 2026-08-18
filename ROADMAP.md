@@ -16,7 +16,9 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 - [x] **Rate limiting na PIN** — 4-miestny PIN má 10 000 kombinácií.
       Limit je v DB, lebo serverless inštancie nezdieľajú pamäť.
 - [x] **Offline queue v kiosku (IndexedDB)** vrátane idempotencie cez
-      klientske UUID. ⚠️ Neodskúšané za behu v prehliadači.
+      klientske UUID. E2E test na výpadok pripojenia je napísaný
+      (`e2e/kiosk.spec.ts`); ⚠️ prvý ostrý beh prebehne až v CI, lokálne sa
+      nedal spustiť (Docker Hub blokuje sieťová politika prostredia).
 - [x] **Rozvrhy a evidencia zmeškaných meraní** cez `pg_cron`.
 - [x] **Limit pokusov na verejné endpointy** — párovanie tabletu a registrácia
       firmy (`0017`, `0018`). Počítadlo je v DB a per IP; ukladá sa iba hash IP.
@@ -50,8 +52,10 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
 
 - [x] **Test izolácie RLS** (`supabase/tests/rls_isolation_test.sql`) —
       overuje reálnym dotazom, že tenant A nevidí dáta tenanta B.
-- [ ] Zapojiť RLS test do CI, aby bežal automaticky pri každej zmene schémy.
-- [ ] E2E test kiosk flow (Playwright).
+- [x] Zapojiť RLS test do CI, aby bežal automaticky pri každej zmene schémy —
+      `write_isolation_test.sql` beží v `.github/workflows/ci.yml` a FAIL
+      v jeho výstupe zhodí build (PASS/FAIL sú dáta, nie chyby SQL).
+- [x] E2E test kiosk flow (Playwright).
 - [x] Poznámka k meraniu.
 - [ ] Foto k meraniu (potrebuje Storage bucket + policies; stĺpec bol
       medzitým odstránený, aby schéma nesľubovala niečo, čo nerobí).
@@ -87,6 +91,10 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
       dosiahnuteľné: `next/image` sa nepoužíva (sharp sa nezavolá) a CSS
       nepochádza od používateľa. Upgrade spraviť samostatne a s E2E testom,
       nie ako súčasť bezpečnostnej opravy.
-- [ ] **E2E testy chýbajú.** Unit testy pokrývajú vyhodnotenie limitov a CSV,
-      SQL testy izoláciu; kompletný kiosk flow v prehliadači (vrátane offline
-      fronty) zatiaľ neoveruje nič automatické.
+- [x] **E2E testy** (Playwright). Overené lokálne: responzivita na mobile
+      (5/5) a verejné stránky (4/5 — health test správne padá bez databázy).
+      ⚠️ **Kiosk flow, párovanie a offline fronta zatiaľ nikdy nebežali** —
+      potrebujú databázu a Docker Hub je v tomto prostredí blokovaný. Prvý
+      ostrý beh prebehne v CI; kým nie je zelený, neber ich ako overené.
+      Proti ostrému projektu ich spúšťať nemožno — merania sú append-only
+      a testovacie záznamy by zostali v audite zákazníka.

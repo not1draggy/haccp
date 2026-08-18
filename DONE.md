@@ -22,8 +22,16 @@ Každý nález overený reálnym dotazom pod rolou útočníka pred opravou aj p
 - [x] Regresný SQL test izolácie zápisov (8/8 PASS, self-contained)
 - [x] `/api/health` vrátane kontroly spojenia s DB
 - [x] Indexy na horúce cesty, slovenská 404, zálohovanie v README
+- [x] E2E testy (Playwright) — kiosk flow, párovanie, izolácia prevádzok,
+      offline fronta, responzivita na mobile
+- [x] CI workflow: typecheck, unit testy, build, SQL izolácia, E2E nad
+      jednorazovou databázou
+- [x] Seed pre lokálny vývoj a testy (`supabase/seed.sql`)
+- [x] Podklad pre právnu verifikáciu limitov (`docs/LIMITY-NA-OVERENIE.md`)
 - [ ] Zapnúť leaked password protection (Supabase Dashboard, nedá sa z kódu)
-- [ ] Právna verifikácia limitov (externý odborník)
+- [ ] Právna verifikácia limitov (externý odborník) — podklad je pripravený
+- [ ] ⚠️ Nechať prebehnúť CI: kiosk E2E testy zatiaľ nikdy nebežali, lokálne
+      sa nedali spustiť (Docker Hub blokuje sieťová politika prostredia)
 
 ## Sprint: anonymita pobočiek a revízia aplikácie
 

@@ -2,6 +2,35 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-08-18
+
+### Pridané
+
+- **E2E testy (Playwright)** — kiosk flow je jediná cesta, ktorou v produkte
+  vzniká meranie, a doteraz ho neoverovalo nič automatické. Testy pokrývajú
+  celý flow (párovanie → pracovník → PIN → zariadenie → hodnota), serverové
+  vyhodnotenie limitu, izoláciu prevádzok priamo v prehliadači, výpadok
+  pripojenia a responzivitu na mobile. Kiosk beží v tabletovom viewporte —
+  testovať ho na desktope by minulo presne tie chyby, čo sa prejavia
+  v kuchyni.
+- **CI workflow** — typecheck, unit testy, build, SQL testy izolácie a E2E nad
+  jednorazovou databázou. FAIL v SQL testoch zhodí build (PASS/FAIL sú v tom
+  skripte dáta, nie chyby SQL, takže bez explicitnej kontroly by regresia
+  prešla ako úspech).
+- **Seed pre lokálny vývoj** (`supabase/seed.sql`) s druhou prevádzkou
+  navyše — testy na nej overujú, že sa jej zamestnanci ani zariadenia na
+  tablete prvej prevádzky neobjavia.
+- **Podklad pre právnu verifikáciu limitov** (`docs/LIMITY-NA-OVERENIE.md`)
+  — tabuľka všetkých limitov s návrhmi zdrojov na overenie, zreteľne
+  označenými ako neoverené, plus postup zápisu výsledku.
+
+### Poznámka k overeniu
+
+E2E testy kiosk flowu zatiaľ **nikdy nebežali** — potrebujú databázu a Docker
+Hub je vo vývojovom prostredí blokovaný sieťovou politikou. Prvý ostrý beh
+prebehne v CI. Lokálne overené: responzivita (5/5) a verejné stránky (4/5,
+health test správne padá bez databázy).
+
 ## [0.6.0] — 2026-08-12
 
 Bezpečnostný audit celej aplikácie. Každý nález nižšie bol pred opravou
