@@ -15,7 +15,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: process.env.CI ? [['github'], ['list']] : [['list']],
+  // HTML report sa v CI ukladá ako artefakt — bez neho po páde nezostane
+  // nič, čo by sa dalo pozrieť.
+  reporter: process.env.CI
+    ? [['github'], ['list'], ['html', { open: 'never' }]]
+    : [['list']],
   timeout: 45_000,
   expect: { timeout: 10_000 },
 

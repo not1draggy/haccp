@@ -65,23 +65,29 @@ jobs:
       - name: Nainštalovať prehliadač pre Playwright
         run: npx playwright install --with-deps chromium
 
+      # Novšie Supabase CLI má staré JWT kľúče (anon / service_role) vypnuté
+      # a vydáva sb_publishable_ / sb_secret_. Ak sa pošle vypnutý kľúč,
+      # požiadavka prejde ako anonymná a skončí na `permission denied`.
+      # Legacy názvy zostávajú ako fallback pre staršie CLI.
       - name: Build
         run: npm run build
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_PUBLISHABLE_KEY || env.E2E_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SECRET_KEY || env.E2E_SERVICE_ROLE_KEY }}
 
       - name: Playwright
         run: npx playwright test
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_PUBLISHABLE_KEY || env.E2E_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SECRET_KEY || env.E2E_SERVICE_ROLE_KEY }}
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
