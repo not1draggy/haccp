@@ -1,6 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  // Fonty pre PDF report sa načítavajú za behu z disku, takže ich Next.js
+  // pri trasovaní závislostí sám nenájde a do serverless funkcie by sa
+  // nedostali — report by potom padal až v produkcii.
+  outputFileTracingIncludes: {
+    '/admin/report': ['./src/lib/report/fonts/**'],
+  },
   headers: async () => [
     {
       source: '/(.*)',
