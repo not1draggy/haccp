@@ -24,12 +24,39 @@ Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   — tabuľka všetkých limitov s návrhmi zdrojov na overenie, zreteľne
   označenými ako neoverené, plus postup zápisu výsledku.
 
-### Poznámka k overeniu
+### Opravené — drift medzi produkciou a migráciami
 
-E2E testy kiosk flowu zatiaľ **nikdy nebežali** — potrebujú databázu a Docker
-Hub je vo vývojovom prostredí blokovaný sieťovou politikou. Prvý ostrý beh
-prebehne v CI. Lokálne overené: responzivita (5/5) a verejné stránky (4/5,
-health test správne padá bez databázy).
+Prvý ostrý beh E2E odhalil, že schéma v migráciách nezodpovedala produkcii.
+Každý z týchto nálezov by sa naplno prejavil až pri obnove zálohy do nového
+projektu — teda presne vtedy, keď na tom najviac záleží.
+
+- **Trigger `measurements_resolve` a funkcia `effective_limits` neboli
+  v žiadnej migrácii** (`0021`). Práve ony presadzujú invariant, na ktorom
+  stojí dôveryhodnosť denníka: status a limity počíta server, klientovi sa
+  verí len nameraná hodnota. V čistej databáze prešlo meranie 12,5 °C
+  v chladničke s limitom 0–5 °C so stavom `ok`, ktorý poslal klient —
+  a aplikácia pritom vyzerala, že funguje správne.
+- **Stĺpce `measurements.min_c_applied` a `max_c_applied` chýbali** (`0022`).
+  Zapisuje do nich ten istý trigger, takže bez nich zlyhal každý zápis
+  merania. Držia limit platný v čase merania: vlastný limit zariadenia nie je
+  verzovaný, takže bez nich by sa spätne nedalo doložiť, prečo bol starý
+  záznam vyhodnotený ako alarm.
+- **Schéma sa spoliehala na to, že Supabase pridelí API rolám práva sama**
+  (`0020`). Na hostovanom projekte to platí, v čistej databáze nie —
+  `service_role` tam nedostal ani SELECT.
+- **Zmazané mŕtve `set_pin` a `verify_pin`** (`0023`). Aplikácia ich nevolá
+  (PIN rieši `bcryptjs` v Node), ale `verify_pin` overovala PIN bez zápisu do
+  `pin_attempts`, teda obchádzala ochranu proti hádaniu PIN-u z `0008`.
+
+Kompletná kontrola: porovnané všetky tabuľky, stĺpce a funkcie produkcie proti
+migráciám; okrem vyššie uvedeného drift nie je. Všetky štyri migrácie sú
+v produkcii no-op (overené odtlačkom práv a existenciou objektov).
+
+### Overenie
+
+CI zelené: 22/22 E2E testov (kiosk flow, párovanie, serverové vyhodnotenie
+limitu, izolácia prevádzok, offline fronta, verejné stránky, responzivita),
+35 unit testov, SQL testy izolácie 8/8, typecheck aj build.
 
 ## [0.6.0] — 2026-08-12
 

@@ -30,8 +30,9 @@ Každý nález overený reálnym dotazom pod rolou útočníka pred opravou aj p
 - [x] Podklad pre právnu verifikáciu limitov (`docs/LIMITY-NA-OVERENIE.md`)
 - [ ] Zapnúť leaked password protection (Supabase Dashboard, nedá sa z kódu)
 - [ ] Právna verifikácia limitov (externý odborník) — podklad je pripravený
-- [ ] ⚠️ Nechať prebehnúť CI: kiosk E2E testy zatiaľ nikdy nebežali, lokálne
-      sa nedali spustiť (Docker Hub blokuje sieťová politika prostredia)
+- [x] CI zelené: 22/22 E2E testov, 35 unit testov, SQL izolácia 8/8
+- [x] Odstránený drift medzi produkciou a migráciami (0020–0023)
+- [x] PDF report pre kontrolu vrátane slovenskej diakritiky
 
 ## Sprint: anonymita pobočiek a revízia aplikácie
 
