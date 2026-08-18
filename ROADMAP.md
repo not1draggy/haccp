@@ -24,8 +24,10 @@ Priorita zhora nadol. Položky sa presúvajú do DONE.md až keď sú overené
       firmy (`0017`, `0018`). Počítadlo je v DB a per IP; ukladá sa iba hash IP.
 - [ ] **Notifikácia pri zmeškaní** (email/push) — zmeškanie sa dnes zapíše,
       ale nikomu sa neozve; treba zvoliť kanál.
-- [ ] **PDF report za obdobie** — mesačný podklad pre kontrolu. Dnes je
-      výstupom pre kontrolu iba CSV; PDF zatiaľ v produkte NIE JE.
+- [x] **PDF report za obdobie** (`/admin/report`) — podklad pre kontrolu so
+      súhrnom, zvýraznenými prekročeniami limitu a osobitným upozornením na
+      alarmy bez zapísaného nápravného opatrenia. Vlastný font (DejaVu orezaná
+      na 22 kB), lebo zabudované PDF fonty nevedia slovenskú diakritiku.
 - [ ] **Odoslanie pozvánky emailom.** Token sa dnes zobrazí adminovi a ten ho
       musí preposlať sám — funguje, ale pôsobí nedokončene.
 - [ ] Zapnúť **leaked password protection** v Supabase Auth (Dashboard →
