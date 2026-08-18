@@ -70,19 +70,29 @@ jobs:
       # Poslať vypnutý kľúč nekončí chybou o kľúči — požiadavka prejde ako
       # anonymná a spadne až na `permission denied`, čo vyzerá ako chyba práv.
       # Preto kľúč nehádame podľa názvu premennej, ale overíme ho dotazom.
+      # Supabase prechádza zo starých JWT kľúčov (anon / service_role) na nové
+      # (sb_publishable_ / sb_secret_) a ktoré sú aktívne, závisí od verzie CLI.
+      # Poslať vypnutý kľúč nekončí zrozumiteľnou chybou — požiadavka prejde
+      # ako anonymná a spadne až na `permission denied`, čo vyzerá ako problém
+      # s právami. Preto kľúč nehádame podľa názvu, ale overíme ho dotazom.
       - name: Zistiť, ktoré kľúče lokálny stack prijíma
         run: |
+          echo "Práva na public.rules v lokálnej databáze:"
+          psql "$E2E_DB_URL" -At -c "select grantee || ': ' || string_agg(privilege_type, ',' order by privilege_type) from information_schema.role_table_grants where table_schema='public' and table_name='rules' and grantee in ('anon','authenticated','service_role','postgres') group by grantee order by grantee;" \
+            | sed 's/^/  /'
+
           vyskusaj() {
-            local popis="$1" cesta="$2" ocakavany="$3"; shift 3
+            local popis="$1" cesta="$2"; shift 2
             for nazov in "$@"; do
               local kluc="${!nazov}"
               if [ -z "$kluc" ]; then continue; fi
-              local kod
-              kod=$(curl -s -o /dev/null -w '%{http_code}' \
+              local kod telo
+              telo=$(curl -s -o /tmp/odpoved -w '%{http_code}' \
                 -H "apikey: $kluc" -H "Authorization: Bearer $kluc" \
-                "$E2E_API_URL$cesta")
-              echo "  $popis / $nazov -> HTTP $kod"
-              if [ "$kod" = "$ocakavany" ]; then
+                "$E2E_API_URL$cesta") || true
+              kod="$telo"
+              echo "  $popis / $nazov -> HTTP $kod  $(head -c 220 /tmp/odpoved)"
+              if [ "$kod" = "200" ]; then
                 echo "$popis=$kluc" >> "$GITHUB_ENV"
                 return 0
               fi
@@ -90,12 +100,13 @@ jobs:
             echo "::error::Pre $popis nefunguje ani jeden kľúč"
             return 1
           }
-          # service role musí prečítať `rules`; anon na ne prístup nemá,
-          # takže 200 dostane iba skutočne privilegovaný kľúč.
-          vyskusaj SERVICE_KEY /rest/v1/rules?select=id\&limit=1 200 \
+
+          # `rules` číta kiosk cez service role, takže 200 musí vrátiť.
+          echo "Kľúče proti /rest/v1/rules:"
+          vyskusaj SERVICE_KEY "/rest/v1/rules?select=id&limit=1" \
             E2E_SECRET_KEY E2E_SERVICE_ROLE_KEY
-          # anon kľúč overíme cez auth endpoint, ktorý je verejný.
-          vyskusaj ANON_KEY /auth/v1/settings 200 \
+          echo "Kľúče proti /auth/v1/settings:"
+          vyskusaj ANON_KEY "/auth/v1/settings" \
             E2E_PUBLISHABLE_KEY E2E_ANON_KEY
 
       - name: Build
