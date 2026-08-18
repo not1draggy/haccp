@@ -22,6 +22,15 @@ const POPIS_KLAVESY: Record<string, string> = {
   ',': 'Desatinná čiarka',
 };
 
+/**
+ * Výsledok merania. Nedá sa adresovať cez `getByRole('status')` — tú rolu
+ * nesie aj banner s počtom čakajúcich meraní a Next.js si navyše do stránky
+ * vkladá vlastný prázdny `role="alert"` oznamovač trasy.
+ */
+function vysledok(page: Page) {
+  return page.locator('button[role="status"]');
+}
+
 /** Zadá hodnotu na numerickej klávesnici a uloží. */
 async function zadajHodnotu(page: Page, hodnota: string) {
   for (const znak of hodnota) {
@@ -39,9 +48,9 @@ test.describe('kiosk — meranie', () => {
 
     await zadajHodnotu(page, '4');
 
-    const vysledok = page.getByRole('status');
-    await expect(vysledok).toContainText('Zapísané — OK');
-    await expect(vysledok).toContainText('4 °C');
+    const stav = vysledok(page);
+    await expect(stav).toContainText('Zapísané — OK');
+    await expect(stav).toContainText('4 °C');
   });
 
   test('hodnota mimo limitu je ALARM, aj keď klient status neposiela', async ({ page }) => {
@@ -52,9 +61,9 @@ test.describe('kiosk — meranie', () => {
     // výhradne server — toto je overenie invariantu, nie len UI.
     await zadajHodnotu(page, '12');
 
-    const vysledok = page.getByRole('status');
-    await expect(vysledok).toContainText('ALARM — mimo limitu!');
-    await expect(vysledok).toContainText('Informuj vedúceho');
+    const stav = vysledok(page);
+    await expect(stav).toContainText('ALARM — mimo limitu!');
+    await expect(stav).toContainText('Informuj vedúceho');
   });
 
   test('záporná teplota sa zapíše správne', async ({ page }) => {
@@ -63,19 +72,19 @@ test.describe('kiosk — meranie', () => {
 
     await zadajHodnotu(page, '-20'); // '-' mapuje na tlačidlo ±
 
-    await expect(page.getByRole('status')).toContainText('Zapísané — OK');
-    await expect(page.getByRole('status')).toContainText('-20 °C');
+    await expect(vysledok(page)).toContainText('Zapísané — OK');
+    await expect(vysledok(page)).toContainText('-20 °C');
   });
 
   test('po uložení sa PIN znovu nepýta', async ({ page }) => {
     await prihlasSa(page);
     await page.getByRole('button', { name: new RegExp(CHLADNICKA) }).click();
     await zadajHodnotu(page, '3');
-    await expect(page.getByRole('status')).toContainText('Zapísané');
+    await expect(vysledok(page)).toContainText('Zapísané');
 
     // Klik na výsledok pokračuje na ďalšie zariadenie. PIN prompt uprostred
     // merania je v CLAUDE.md výslovne zakázaný — prerušuje operátora.
-    await page.getByRole('status').click();
+    await vysledok(page).click();
 
     await expect(page.getByRole('heading', { name: 'Ktoré zariadenie?' })).toBeVisible();
     await expect(page.getByRole('heading', { name: /— PIN$/ })).toBeHidden();
@@ -89,7 +98,7 @@ test.describe('kiosk — meranie', () => {
     }
     await page.getByRole('button', { name: 'Ďalej' }).click();
 
-    await expect(page.getByRole('alert')).toContainText('Nesprávny PIN');
+    await expect(page.getByText('Nesprávny PIN.')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Ktoré zariadenie?' })).toBeHidden();
   });
 });
@@ -121,10 +130,10 @@ test.describe('kiosk — výpadok pripojenia', () => {
     await zadajHodnotu(page, '2');
 
     // Operátor musí vidieť, že meranie nie je stratené — inak ho zopakuje.
-    await expect(page.getByRole('status')).toContainText('Bez pripojenia');
+    await expect(vysledok(page)).toContainText('Bez pripojenia');
 
     await context.setOffline(false);
-    await page.getByRole('status').click();
+    await vysledok(page).click();
 
     // Fronta sa vyprázdni na pozadí; indikátor čakajúcich meraní zmizne.
     await expect(page.getByText(/čaká na odoslanie/i)).toHaveCount(0, { timeout: 20_000 });
