@@ -65,23 +65,52 @@ jobs:
       - name: Nainštalovať prehliadač pre Playwright
         run: npx playwright install --with-deps chromium
 
-      # Novšie Supabase CLI má staré JWT kľúče (anon / service_role) vypnuté
-      # a vydáva sb_publishable_ / sb_secret_. Ak sa pošle vypnutý kľúč,
-      # požiadavka prejde ako anonymná a skončí na `permission denied`.
-      # Legacy názvy zostávajú ako fallback pre staršie CLI.
+      # Supabase prechádza zo starých JWT kľúčov (anon / service_role) na nové
+      # (sb_publishable_ / sb_secret_) a ktoré sú aktívne, závisí od verzie CLI.
+      # Poslať vypnutý kľúč nekončí chybou o kľúči — požiadavka prejde ako
+      # anonymná a spadne až na `permission denied`, čo vyzerá ako chyba práv.
+      # Preto kľúč nehádame podľa názvu premennej, ale overíme ho dotazom.
+      - name: Zistiť, ktoré kľúče lokálny stack prijíma
+        run: |
+          vyskusaj() {
+            local popis="$1" cesta="$2" ocakavany="$3"; shift 3
+            for nazov in "$@"; do
+              local kluc="${!nazov}"
+              if [ -z "$kluc" ]; then continue; fi
+              local kod
+              kod=$(curl -s -o /dev/null -w '%{http_code}' \
+                -H "apikey: $kluc" -H "Authorization: Bearer $kluc" \
+                "$E2E_API_URL$cesta")
+              echo "  $popis / $nazov -> HTTP $kod"
+              if [ "$kod" = "$ocakavany" ]; then
+                echo "$popis=$kluc" >> "$GITHUB_ENV"
+                return 0
+              fi
+            done
+            echo "::error::Pre $popis nefunguje ani jeden kľúč"
+            return 1
+          }
+          # service role musí prečítať `rules`; anon na ne prístup nemá,
+          # takže 200 dostane iba skutočne privilegovaný kľúč.
+          vyskusaj SERVICE_KEY /rest/v1/rules?select=id\&limit=1 200 \
+            E2E_SECRET_KEY E2E_SERVICE_ROLE_KEY
+          # anon kľúč overíme cez auth endpoint, ktorý je verejný.
+          vyskusaj ANON_KEY /auth/v1/settings 200 \
+            E2E_PUBLISHABLE_KEY E2E_ANON_KEY
+
       - name: Build
         run: npm run build
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_PUBLISHABLE_KEY || env.E2E_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SECRET_KEY || env.E2E_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_KEY }}
 
       - name: Playwright
         run: npx playwright test
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.E2E_PUBLISHABLE_KEY || env.E2E_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ env.E2E_SECRET_KEY || env.E2E_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_KEY }}
 
       - uses: actions/upload-artifact@v4
         if: failure()
