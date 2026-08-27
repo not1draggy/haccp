@@ -1,6 +1,6 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
-import { createKiosk, toggleKiosk, unpairKiosk } from '../manage-actions';
+import { createKiosk, setKioskPin, toggleKiosk, unpairKiosk } from '../manage-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +14,7 @@ export default async function KiosksPage({
 
   const { data: rows } = await supabase
     .from('kiosk_devices')
-    .select('id, name, pairing_code, paired_at, last_seen_at, active')
+    .select('id, name, pairing_code, paired_at, last_seen_at, active, pin_set')
     .eq('location_id', locationId ?? NO_LOCATION)
     .order('created_at');
 
@@ -28,7 +28,7 @@ export default async function KiosksPage({
 
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <h2 className="text-lg font-bold">Pridať kiosk (tablet)</h2>
-        <form action={createKiosk} className="mt-4 grid gap-3 sm:grid-cols-[2fr_1fr_auto]">
+        <form action={createKiosk} className="mt-4 grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto]">
           <input
             name="name"
             required
@@ -43,6 +43,14 @@ export default async function KiosksPage({
             placeholder="Kód (voliteľné)"
             className="rounded-lg border border-steel/20 px-3 py-2 font-mono uppercase focus:border-steel focus:outline-none"
           />
+          <input
+            name="pin"
+            inputMode="numeric"
+            pattern="[0-9]{4,8}"
+            aria-label="PIN prevádzky"
+            placeholder="PIN (4–8 číslic)"
+            className="rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
+          />
           <button
             type="submit"
             className="rounded-lg bg-steel px-5 py-2 font-semibold text-white hover:bg-ink"
@@ -51,9 +59,10 @@ export default async function KiosksPage({
           </button>
         </form>
         <p className="mt-2 text-xs text-steel/50">
-          Kód si môžeš zvoliť (napr. podľa pobočky), inak sa vygeneruje. Zadáš ho
-          raz na tablete na adrese /kiosk. Tablet potom vidí výhradne zariadenia
-          a zamestnancov tejto prevádzky.
+          Kód si môžeš zvoliť (napr. podľa pobočky), inak sa vygeneruje. Kuchyňa
+          ním spolu s PIN-om otvorí kiosk na adrese /kiosk. Tablet potom vidí
+          výhradne zariadenia a zamestnancov tejto prevádzky. Prihlásenie platí
+          jednu zmenu (12 hodín), potom sa zadáva znova.
         </p>
       </section>
 
@@ -73,29 +82,51 @@ export default async function KiosksPage({
                 <div className="min-w-40 flex-1">
                   <p className="font-semibold">{k.name}</p>
                   <p className="text-sm text-steel/50">
+                    kód:{' '}
+                    <span className="font-mono font-bold tracking-widest text-ink">
+                      {k.pairing_code}
+                    </span>
                     {k.paired_at ? (
                       <>
-                        spárovaný ·{' '}
+                        {' · prihlásený'}
                         {k.last_seen_at
-                          ? `aktívny ${new Date(k.last_seen_at).toLocaleString('sk-SK', {
+                          ? ` · aktívny ${new Date(k.last_seen_at).toLocaleString('sk-SK', {
                               timeZone: 'Europe/Bratislava',
                               day: 'numeric',
                               month: 'numeric',
                               hour: '2-digit',
                               minute: '2-digit',
                             })}`
-                          : 'bez aktivity'}
+                          : ''}
                       </>
                     ) : (
-                      <>
-                        nespárovaný · kód:{' '}
-                        <span className="font-mono font-bold tracking-widest text-ink">
-                          {k.pairing_code}
-                        </span>
-                      </>
+                      ' · odhlásený'
                     )}
                   </p>
+                  {!k.pin_set && (
+                    <p className="mt-1 text-sm font-semibold text-warn">
+                      PIN nie je nastavený — kuchyňa sa neprihlási.
+                    </p>
+                  )}
                 </div>
+                <form action={setKioskPin} className="flex items-center gap-2">
+                  <input type="hidden" name="id" value={k.id} />
+                  <input
+                    name="pin"
+                    required
+                    inputMode="numeric"
+                    pattern="[0-9]{4,8}"
+                    aria-label={`PIN pre ${k.name}`}
+                    placeholder="Nový PIN"
+                    className="w-28 rounded-lg border border-steel/20 px-3 py-1.5 text-sm focus:border-steel focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-steel/20 px-3 py-1.5 text-sm hover:bg-frost"
+                  >
+                    Uložiť PIN
+                  </button>
+                </form>
                 {k.paired_at && (
                   <form action={unpairKiosk}>
                     <input type="hidden" name="id" value={k.id} />
@@ -103,7 +134,7 @@ export default async function KiosksPage({
                       type="submit"
                       className="rounded-lg border border-steel/20 px-3 py-1.5 text-sm hover:bg-frost"
                     >
-                      Odpojiť tablet
+                      Odhlásiť tablet
                     </button>
                   </form>
                 )}

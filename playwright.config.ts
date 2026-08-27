@@ -43,9 +43,9 @@ export default defineConfig({
       testMatch: /kiosk\.spec\.ts/,
     },
     {
-      name: 'kiosk-parovanie',
+      name: 'kiosk-prihlasenie',
       use: { ...devices['Galaxy Tab S4 landscape'] }, // zámerne bez cookie
-      testMatch: /parovanie\.spec\.ts/,
+      testMatch: /prihlasenie\.spec\.ts/,
     },
     {
       name: 'desktop',

@@ -84,7 +84,9 @@ export async function signUp(formData: FormData) {
   });
   if (signInError) redirect('/login');
 
-  redirect(`/admin/locations?msg=${encodeURIComponent(
-    `Firma „${company}" je založená. Kód tabletu pre prevádzku „${location}": ${result.pairing_code}`,
+  // Kiosk sa bez PIN-u neprihlási, takže admina vedieme rovno tam, kde ho
+  // nastaví — inak by mu kuchyňa zavolala, že sa tablet nedá otvoriť.
+  redirect(`/admin/kiosks?msg=${encodeURIComponent(
+    `Firma „${company}" je založená. Kód tabletu pre prevádzku „${location}" je ${result.pairing_code} — nastav mu ešte PIN, kuchyňa ho bude potrebovať pri prihlásení.`,
   )}`);
 }

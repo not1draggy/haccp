@@ -2,7 +2,7 @@ import { getKioskSession } from '@/lib/kiosk/session';
 import { createServiceClient } from '@/lib/supabase/service';
 import { resolveLimits } from '@/lib/haccp/limits';
 import KioskFlow, { type KioskDevice, type KioskEmployee } from './KioskFlow';
-import PairForm from './PairForm';
+import LoginForm from './LoginForm';
 import { dnesIso, jeRovnakyDen } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +11,7 @@ export default async function KioskPage() {
   const session = await getKioskSession();
 
   if (!session) {
-    return <PairForm />;
+    return <LoginForm />;
   }
 
   const supabase = createServiceClient();

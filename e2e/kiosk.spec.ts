@@ -139,3 +139,22 @@ test.describe('kiosk — výpadok pripojenia', () => {
     await expect(page.getByText(/čaká na odoslanie/i)).toHaveCount(0, { timeout: 20_000 });
   });
 });
+
+// Zámerne posledné v súbore: odhlásenie zneplatní token uložený v
+// storageState, ktorý zdieľajú všetky testy tohto projektu.
+test.describe('kiosk — odhlásenie prevádzky', () => {
+  test('odhlásenie vráti na prihlásenie a kiosk sa už neotvorí sám', async ({ page }) => {
+    await page.goto('/kiosk');
+    await expect(page.getByRole('heading', { name: 'Kto meria?' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Odhlásiť prevádzku' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Prihlásenie do prevádzky' })).toBeVisible();
+
+    // Nové otvorenie kiosku nesmie prevádzku obnoviť — token je neplatný
+    // aj na serveri, nielen zmazaný v prehliadači.
+    await page.goto('/kiosk');
+    await expect(page.getByRole('heading', { name: 'Prihlásenie do prevádzky' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Kto meria?' })).toBeHidden();
+  });
+});

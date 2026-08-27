@@ -20,10 +20,17 @@ insert into public.locations (id, tenant_id, name) values
    '11111111-1111-4111-8111-111111111111', 'Vedľajšia prevádzka')
 on conflict (id) do nothing;
 
-insert into public.kiosk_devices (id, tenant_id, location_id, name, pairing_code) values
+-- PIN prevádzky je 9876 (PIN zamestnanca je 4321 — zámerne iné, aby test
+-- odhalil, keby sa jeden použil namiesto druhého).
+insert into public.kiosk_devices (id, tenant_id, location_id, name, pairing_code, pin_hash) values
   ('33333333-3333-4333-8333-333333333333',
    '11111111-1111-4111-8111-111111111111',
-   '22222222-2222-4222-8222-222222222222', 'Tablet kuchyňa', 'E2ETEST')
+   '22222222-2222-4222-8222-222222222222', 'Tablet kuchyňa', 'E2ETEST',
+   '$2a$10$iV2w5xBFlBXeRBKb1LZD3O02aGvjS4djRoyPZZ0LDOB6y1kOqFudW'),
+  -- Tablet bez PIN-u: prihlásenie musí odmietnuť, nie ho pustiť na kód.
+  ('33333333-3333-4333-8333-333333333344',
+   '11111111-1111-4111-8111-111111111111',
+   '22222222-2222-4222-8222-222222222222', 'Tablet bez PIN', 'NOPIN1', null)
 on conflict (id) do nothing;
 
 insert into public.devices (id, tenant_id, location_id, device_type_id, name, sort_order) values

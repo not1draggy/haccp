@@ -3,6 +3,7 @@
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import {
+  clearKioskCookie,
   generateKioskToken,
   getKioskSession,
   setKioskCookie,
@@ -16,20 +17,29 @@ import { dnesIso } from '@/lib/haccp/cas';
 // Všetky kiosk actions bežia so service role — tenant/location scoping
 // sa preto VŽDY odvodzuje z device tokenu (getKioskSession), nikdy z klienta.
 
-const pairSchema = z.object({
+const loginSchema = z.object({
   code: z.string().trim().min(4).max(32),
+  pin: z.string().trim().regex(/^\d{4,8}$/),
 });
 
-export async function pairKiosk(input: { code: string }) {
-  const parsed = pairSchema.safeParse(input);
+// Kód aj PIN sú jediná prekážka medzi cudzím človekom a prevádzkou, takže
+// hláška nesmie prezradiť, ktorá z nich bola zlá — ani to, či taká prevádzka
+// vôbec existuje. Inak by sa dal zoznam prevádzok zistiť hádaním kódov.
+const NEUSPECH = 'Nesprávny kód prevádzky alebo PIN.';
+
+/**
+ * Prihlásenie tabletu do prevádzky. Nahradilo pôvodné párovanie samotným
+ * kódom: to tablet spárovalo natrvalo, takže prehliadač s uloženou cookie
+ * otváral kuchyňu bez akéhokoľvek overenia.
+ */
+export async function loginKiosk(input: { code: string; pin: string }) {
+  const parsed = loginSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false as const, error: 'Zadaj platný párovací kód.' };
+    return { ok: false as const, error: NEUSPECH };
   }
 
   const supabase = createServiceClient();
 
-  // Kód je jediná prekážka medzi útočníkom a prevádzkou a úspešné uhádnutie
-  // navyše odpojí tablet v kuchyni — hádanie preto musí byť obmedzené.
   const limit = await checkRateLimit('pairing');
   if (limit.lockedSeconds > 0) {
     return {
@@ -40,17 +50,22 @@ export async function pairKiosk(input: { code: string }) {
 
   const { data: kiosk } = await supabase
     .from('kiosk_devices')
-    .select('id')
+    .select('id, pin_hash')
     .eq('pairing_code', parsed.data.code.toUpperCase())
     .eq('active', true)
     .maybeSingle();
 
-  if (!kiosk) {
+  // Porovnanie prebehne aj pri neznámom kóde, aby sa prevádzky nedali
+  // rozlíšiť podľa toho, ako rýchlo príde odpoveď.
+  const hash = kiosk?.pin_hash ?? '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinva';
+  const pinSedi = await bcrypt.compare(parsed.data.pin, hash);
+
+  if (!kiosk || !kiosk.pin_hash || !pinSedi) {
     await limit.record(false);
-    return { ok: false as const, error: 'Neznámy párovací kód.' };
+    return { ok: false as const, error: NEUSPECH };
   }
 
-  // Re-pair je povolený: nový token zneplatní prípadný starý tablet.
+  // Nové prihlásenie zneplatní predošlú session toho istého tabletu.
   const token = generateKioskToken();
   const { error } = await supabase
     .from('kiosk_devices')
@@ -62,11 +77,25 @@ export async function pairKiosk(input: { code: string }) {
     .eq('id', kiosk.id);
 
   if (error) {
-    return { ok: false as const, error: 'Párovanie zlyhalo, skús znova.' };
+    return { ok: false as const, error: 'Prihlásenie zlyhalo, skús znova.' };
   }
 
   await limit.record(true);
   await setKioskCookie(token);
+  return { ok: true as const };
+}
+
+/** Odhlásenie prevádzky — token zneplatní aj na serveri, nielen v prehliadači. */
+export async function logoutKiosk() {
+  const session = await getKioskSession();
+  if (session) {
+    const supabase = createServiceClient();
+    await supabase
+      .from('kiosk_devices')
+      .update({ device_token_hash: null, paired_at: null })
+      .eq('id', session.kioskId);
+  }
+  await clearKioskCookie();
   return { ok: true as const };
 }
 
