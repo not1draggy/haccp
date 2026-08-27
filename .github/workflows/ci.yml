@@ -36,9 +36,13 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Verzia je pripnutá zámerne. `latest` sa pýta GitHub API a pri anonymnom
+      # volaní naráža na limit — CI potom padne na veci, ktorá s kódom nesúvisí.
+      # Druhý dôvod: nová verzia CLI už raz zmenila formát API kľúčov a zhodila
+      # beh; upgrade nech je vedomý krok, nie prekvapenie v cudzom PR.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.116.0
 
       # Jednorazová databáza. Merania sú append-only a nedajú sa zmazať,
       # takže E2E testy nesmú bežať proti ostrému projektu — testovacie
