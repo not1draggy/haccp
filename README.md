@@ -24,7 +24,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind · Supabase (Postgres + Auth) 
 
 1. Vytvor projekt na [supabase.com](https://supabase.com) (región `eu-central-1`).
 2. SQL Editor → spusti migrácie z `supabase/migrations/` **v poradí**:
-   `0001` až `0019` (poradie je dôležité — neskoršie stavajú na skorších).
+   `0001` až `0025` (poradie je dôležité — neskoršie stavajú na skorších).
 3. *(Odporúčané, nie povinné)* **Authentication → Hooks → Customize Access
    Token (JWT) Claims** → schéma `public`, funkcia `custom_access_token_hook`.
    Hook vloží `tenant_id` priamo do tokenu a ušetrí jeden dotaz pri každej
@@ -71,12 +71,19 @@ appka bez DB vyzerá zvonku živá, ale kuchyňa cez ňu nezapíše ani meranie.
 
 ### 5. Spustenie kiosku
 
-1. Párovací kód nájdeš v administrácii → **Prevádzky** (vytvorí sa spolu
-   s prevádzkou) alebo → **Kiosky**, kde vieš pridať ďalší tablet.
-2. Na tablete otvor `https://tvoja-domena.sk/kiosk` a zadaj kód — tablet
-   zostane spárovaný natrvalo.
-3. Flow merania: meno → PIN → zariadenie → teplota. PIN sa zadáva **raz za
-   session**, ďalšie merania idú bez prerušenia. Cieľ < 10 sekúnd.
+1. V administrácii → **Kiosky** nastav tabletu **PIN prevádzky**. Bez neho sa
+   kiosk neprihlási — je to zámerné, aby na otvorenie kuchyne nestačil
+   samotný kód.
+2. Tam nájdeš aj **kód prevádzky**. Kuchyňa potrebuje oboje.
+3. Na tablete otvor `https://tvoja-domena.sk/kiosk`, zadaj kód a PIN.
+   Prihlásenie platí **12 hodín** (jedna zmena), potom sa zadáva znova.
+   Tlačidlo **Odhlásiť prevádzku** ho ukončí okamžite.
+4. Flow merania: meno → PIN pracovníka → zariadenie → teplota. PIN pracovníka
+   sa zadáva **raz za session**, ďalšie merania idú bez prerušenia.
+   Cieľ < 10 sekúnd.
+
+Dva PIN-y majú rôzne úlohy a nezamieňajú sa: **PIN prevádzky** púšťa tablet
+do kuchyne, **PIN pracovníka** podpisuje konkrétne meranie do denníka.
 
 Admin rozhranie: `/login` → `/admin`.
 
@@ -84,11 +91,13 @@ Admin rozhranie: `/login` → `/admin`.
 
 - **Admini**: Supabase Auth session, RLS podľa tenanta. Tenant sa rieši
   dvojstupňovo — claim z JWT, inak lookup členstva podľa `auth.uid()`.
-- **Kuchyňa**: žiadne osobné sessions. Tablet drží device token (httpOnly
-  cookie, SHA-256 hash v DB), zápisy idú cez server actions so service role
-  a explicitným tenant/location scopingom. PIN overuje identitu pracovníka
-  pre audit záznam — kontroluje sa aj pri samotnom zápise, nielen pri
-  odomknutí session.
+- **Kuchyňa**: žiadne osobné sessions. Do prevádzky sa tablet prihlási
+  **kódom prevádzky a PIN-om** (bcrypt hash v DB); session drží device token
+  (httpOnly cookie, SHA-256 hash v DB) a platí 12 hodín — platnosť sa
+  kontroluje na serveri, nie cez `maxAge` cookie. Zápisy idú cez server
+  actions so service role a explicitným tenant/location scopingom. PIN
+  pracovníka overuje identitu pre audit záznam — kontroluje sa aj pri
+  samotnom zápise, nielen pri odomknutí session.
 - **Merania a nápravné opatrenia**: append-only na úrovni DB (trigger +
   odobraté grants).
 - **Audit**: každá mutácia governed tabuliek → `audit_log`, do ktorého sa
@@ -134,9 +143,10 @@ npm run test:e2e     # alebo: npm run test:e2e:ui
 > ktoré sú append-only a nedajú sa zmazať — testovacie záznamy by navždy
 > zostali v audite zákazníka.
 
-Seed (`supabase/seed.sql`) vytvára firmu s dvoma prevádzkami, párovacím kódom
-`E2ETEST` a PIN-om `4321`. Druhá prevádzka je tam zámerne — testy overujú, že
-sa jej zamestnanci ani zariadenia na tablete prvej prevádzky **neobjavia**.
+Seed (`supabase/seed.sql`) vytvára firmu s dvoma prevádzkami, kódom prevádzky
+`E2ETEST` s PIN-om `9876` a zamestnancom s PIN-om `4321`. Druhá prevádzka je
+tam zámerne — testy overujú, že sa jej zamestnanci ani zariadenia na tablete
+prvej prevádzky **neobjavia**.
 
 Všetko spolu beží aj v CI (`.github/workflows/ci.yml`): typecheck, unit testy,
 build, SQL testy izolácie a E2E nad čerstvou databázou.
@@ -149,7 +159,8 @@ ukončenej ROLLBACKom a v DB po nich nič nezostane:
 | Súbor | Čo overuje |
 | --- | --- |
 | `rls_isolation_test.sql` | Že firma nevidí dáta inej firmy (čítanie). Pred spustením treba doplniť dve UUID. |
-| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov). Self-contained, netreba nič upravovať. Beží aj v CI. |
+| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov, PIN a odhlásenie cudzieho tabletu). Self-contained. Beží v CI. |
+| `rate_limit_test.sql` | Že limit pokusov naozaj limituje — pri registrácii aj úspešné pokusy, pri prihlásení tabletu iba neúspešné. Self-contained. Beží v CI. |
 
 Po každej zmene schémy spusti oba a zároveň `get_advisors` (security aj
 performance).

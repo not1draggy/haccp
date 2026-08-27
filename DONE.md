@@ -2,6 +2,17 @@
 
 Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 
+## Sprint: prihlásenie do prevádzky
+
+- [x] Kiosk sa už neotvára sám — vyžaduje kód prevádzky a PIN (`0025`)
+- [x] Session platí 12 hodín, platnosť sa kontroluje na serveri
+- [x] Odhlásenie prevádzky zneplatní token aj v databáze
+- [x] Neutrálna chybová hláška, konštantné správanie pri neznámom kóde
+- [x] `pin_hash` a `device_token_hash` nečitateľné cez API
+- [x] Nastavenie PIN-u v administrácii + výstraha pri tablete bez PIN-u
+- [x] Regresné testy izolácie tabletov medzi firmami
+- [ ] Nastaviť PIN produkčnému tabletu „Bistro Kalša" (Admin → Kiosky)
+
 ## Sprint: bezpečnostný audit pred predajom
 
 Každý nález overený reálnym dotazom pod rolou útočníka pred opravou aj po nej.

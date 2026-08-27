@@ -2,6 +2,39 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-08-27
+
+### Zmenené — vstup do kiosku
+
+- **Kiosk sa otváral sám do naposledy použitej prevádzky.** Nebolo to
+  zadrátované v kóde — žiadny názov prevádzky v ňom nie je — ale device token
+  v cookie platil rok a nič ho neoveroval. Kto sa raz dostal k tabletu alebo
+  ku kódu, mal prevádzku otvorenú natrvalo.
+
+  Vstup je odteraz **kód prevádzky + PIN** (`0025`). PIN je bcrypt hash na
+  `kiosk_devices`, session platí 12 hodín a **platnosť sa kontroluje na
+  serveri**, nie cez `maxAge` cookie — tú drží prehliadač a ukradnutý token by
+  sa dal prehrať aj po vypršaní. Odhlásenie zneplatní token aj v databáze.
+
+- **Neutrálna hláška.** „Nesprávny kód prevádzky alebo PIN." nerozlišuje, či
+  bol zlý kód alebo PIN, a porovnanie hashu prebehne aj pri neznámom kóde —
+  inak by sa zoznam prevádzok dal zistiť hádaním kódov alebo meraním času
+  odpovede. Limit pokusov (10 / 15 min per IP) zostal.
+
+- **`pin_hash` ani `device_token_hash` už nie sú čitateľné cez API** ani pre
+  prihláseného admina. Column-level REVOKE je pri table-level grante bez
+  účinku, preto sa právo odoberá celé a vracia výpočtom stĺpcov — nový stĺpec
+  tejto tabuľky tým nebude čitateľný automaticky. Administrácia vidí iba
+  odvodené `pin_set`.
+
+- **Migrácia zámerne žiadny PIN nevymýšľa.** Vygenerovaný PIN by nikto
+  nepoznal a kuchyňu by to zablokovalo bez vysvetlenia. Existujúce tablety
+  majú `pin_hash = NULL`, prihlásenie sa odmietne a administrácia ich označí
+  výstrahou „PIN nie je nastavený".
+
+- UI zostalo nezmenené: domovská obrazovka je rovnaká, prihlásenie používa ten
+  istý vizuálny jazyk ako pôvodné párovanie, pribudlo jedno pole.
+
 ## [0.7.0] — 2026-08-18
 
 ### Pridané

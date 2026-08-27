@@ -48,6 +48,12 @@ insert into memberships (id, tenant_id, user_id, role, display_name, pin_hash, a
   ('b0000000-4444-4000-8000-00000000000e','b0000000-0000-4000-8000-000000000002',
    null,'employee','B-kuchar','$2a$10$nepouzitelnyhashnatest', true);
 
+insert into kiosk_devices (id, tenant_id, location_id, name, pairing_code, pin_hash) values
+  ('a0000000-6666-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001',
+   'a0000000-1111-4000-8000-000000000001','A-tablet','TESTAA','$2a$10$hashA'),
+  ('b0000000-6666-4000-8000-000000000002','b0000000-0000-4000-8000-000000000002',
+   'b0000000-1111-4000-8000-000000000002','B-tablet','TESTBB','$2a$10$hashB');
+
 insert into pin_attempts (tenant_id, membership_id, succeeded) values
   ('b0000000-0000-4000-8000-000000000002','b0000000-4444-4000-8000-00000000000e', false);
 
@@ -130,6 +136,46 @@ declare v int;
 begin
   select count(*) into v from rules where id='a0000000-5555-4000-8000-000000000001';
   insert into vysledok values (7,'citanie pravidiel funguje', case when v=1 then 'PASS' else 'FAIL' end);
+end $$;
+
+-- (6) Tablet cudzej firmy: PIN je jediná prekážka pred jej kuchyňou.
+do $$
+declare n int;
+begin
+  update kiosk_devices set pin_hash = '$2a$10$utocnikov'
+   where id = 'b0000000-6666-4000-8000-000000000002';
+  get diagnostics n = row_count;
+  insert into vysledok values (9,'nastavenie PIN cudziemu tabletu',
+    case when n = 0 then 'PASS' else 'FAIL — prepisal' end);
+
+  update kiosk_devices set device_token_hash = null
+   where id = 'b0000000-6666-4000-8000-000000000002';
+  get diagnostics n = row_count;
+  insert into vysledok values (10,'odhlasenie cudzieho tabletu',
+    case when n = 0 then 'PASS' else 'FAIL — odhlasil' end);
+
+  update kiosk_devices set pin_hash = '$2a$10$novyA'
+   where id = 'a0000000-6666-4000-8000-000000000001';
+  get diagnostics n = row_count;
+  insert into vysledok values (11,'sprava vlastneho tabletu funguje',
+    case when n = 1 then 'PASS' else 'FAIL' end);
+exception when others then
+  insert into vysledok values (11,'sprava tabletov','FAIL — '||sqlerrm);
+end $$;
+
+-- (7) PIN prevádzky nesmie byť čitateľný cez API ani pre vlastného admina.
+do $$ begin
+  perform pin_hash from kiosk_devices where id = 'a0000000-6666-4000-8000-000000000001';
+  insert into vysledok values (12,'citanie pin_hash cez API','FAIL — precital');
+exception when insufficient_privilege then
+  insert into vysledok values (12,'citanie pin_hash cez API','PASS');
+end $$;
+
+do $$ begin
+  perform device_token_hash from kiosk_devices where id = 'a0000000-6666-4000-8000-000000000001';
+  insert into vysledok values (13,'citanie device tokenu cez API','FAIL — precital');
+exception when insufficient_privilege then
+  insert into vysledok values (13,'citanie device tokenu cez API','PASS');
 end $$;
 
 reset role;
