@@ -1,11 +1,12 @@
+import Link from 'next/link';
 import { login } from './actions';
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; msg?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, msg } = await searchParams;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
@@ -17,10 +18,17 @@ export default async function LoginPage({
         <p className="mt-1 text-sm text-steel/60">Administrácia prevádzky</p>
 
         {error && (
-          <p className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          <p role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
             {error === 'auth'
               ? 'Nesprávny email alebo heslo.'
               : 'Zadaj platný email a heslo.'}
+          </p>
+        )}
+
+        {msg === 'invite-existing' && (
+          <p role="status" className="mt-4 rounded-lg bg-ok/10 px-3 py-2 text-sm text-ink">
+            Pozvánka je prijatá. Na tento email už účet existuje — prihlás sa
+            svojím doterajším heslom.
           </p>
         )}
 
@@ -52,6 +60,13 @@ export default async function LoginPage({
         >
           Prihlásiť sa
         </button>
+
+        <p className="mt-4 text-center text-sm text-steel/60">
+          Ešte nemáš firmu v systéme?{' '}
+          <Link href="/registracia" className="font-semibold text-ink underline">
+            Zaregistruj ju
+          </Link>
+        </p>
       </form>
     </main>
   );

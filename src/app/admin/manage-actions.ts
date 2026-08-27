@@ -1,6 +1,6 @@
 'use server';
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
@@ -40,12 +40,16 @@ function back(path: string, msg?: string): never {
 /**
  * Párovací kód tabletu. Vynechané sú znaky, ktoré si personál pri prepisovaní
  * z papiera mýli (0/O, 1/I/L) — kód sa diktuje cez kuchyňu, nie kopíruje.
+ *
+ * randomInt, nie Math.random: kód je jediný údaj, ktorým sa tablet autorizuje
+ * do prevádzky, takže musí byť nepredvídateľný. Math.random na to nie je
+ * určený — zo série hodnôt sa dá stav generátora odvodiť.
  */
 function generatePairingCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    code += alphabet[randomInt(alphabet.length)];
   }
   return code;
 }
@@ -130,7 +134,10 @@ export async function createLocation(formData: FormData) {
     );
   }
 
-  back('/admin/locations', `Prevádzka „${name.data}" vytvorená. Kód tabletu: ${code}`);
+  back(
+    '/admin/locations',
+    `Prevádzka „${name.data}" vytvorená. Kód tabletu: ${code} — v sekcii Kiosky mu ešte nastav PIN.`,
+  );
 }
 
 /** Premenovanie firmy. Zobrazuje sa v hlavičke aj v podkladoch pre kontrolu. */
@@ -580,15 +587,17 @@ export async function createKiosk(formData: FormData) {
   if (!name.success) back('/admin/kiosks', 'Zadaj názov kiosku.');
 
   // Vlastný kód je voliteľný — prevádzky si ich radi volia podľa pobočky.
+  // Minimum je 6 znakov: štvorznakový kód má 1,6 mil. kombinácií, čo je pri
+  // distribuovanom hádaní (limit je per IP) v dosahu.
   const rawCode = String(formData.get('pairingCode') ?? '').trim().toUpperCase();
   let code = '';
   if (rawCode.length > 0) {
     const parsedCode = z
       .string()
-      .regex(/^[A-Z0-9]{4,12}$/)
+      .regex(/^[A-Z0-9]{6,12}$/)
       .safeParse(rawCode);
     if (!parsedCode.success) {
-      back('/admin/kiosks', 'Kód môže mať 4–12 veľkých písmen a číslic.');
+      back('/admin/kiosks', 'Kód môže mať 6–12 veľkých písmen a číslic.');
     }
     code = parsedCode.data;
   }
@@ -604,11 +613,22 @@ export async function createKiosk(formData: FormData) {
     }
   }
 
+  // PIN je voliteľný pri zakladaní, ale bez neho sa tablet neprihlási —
+  // administrácia to pri takom kiosku zreteľne označí.
+  const rawPin = String(formData.get('pin') ?? '').trim();
+  let pinHash: string | null = null;
+  if (rawPin.length > 0) {
+    const parsedPin = z.string().regex(/^\d{4,8}$/).safeParse(rawPin);
+    if (!parsedPin.success) back('/admin/kiosks', 'PIN musí mať 4–8 číslic.');
+    pinHash = bcrypt.hashSync(parsedPin.data, 10);
+  }
+
   const { error } = await supabase.from('kiosk_devices').insert({
     tenant_id: tenantId,
     location_id: locationId,
     name: name.data,
     pairing_code: code,
+    pin_hash: pinHash,
   });
   // Kód je unikátny naprieč celou platformou — inak by tablet nevedel,
   // do ktorej prevádzky patrí.
@@ -621,6 +641,24 @@ export async function createKiosk(formData: FormData) {
   back('/admin/kiosks');
 }
 
+export async function setKioskPin(formData: FormData) {
+  const id = z.string().uuid().safeParse(formData.get('id'));
+  const pin = z.string().regex(/^\d{4,8}$/).safeParse(formData.get('pin'));
+  if (!id.success || !pin.success) back('/admin/kiosks', 'PIN musí mať 4–8 číslic.');
+
+  const { supabase } = await getScope();
+  // `.eq('id')` beží pod RLS, takže cudzí tablet sa sem nedostane ani
+  // podvrhnutým id — dotaz jednoducho neaktualizuje žiadny riadok.
+  const { error } = await supabase
+    .from('kiosk_devices')
+    .update({ pin_hash: bcrypt.hashSync(pin.data, 10) })
+    .eq('id', id.data);
+  if (error) back('/admin/kiosks', 'Uloženie zlyhalo.');
+
+  revalidatePath('/admin/kiosks');
+  back('/admin/kiosks', 'PIN prevádzky nastavený.');
+}
+
 export async function unpairKiosk(formData: FormData) {
   const id = z.string().uuid().safeParse(formData.get('id'));
   if (!id.success) back('/admin/kiosks');
@@ -631,7 +669,7 @@ export async function unpairKiosk(formData: FormData) {
     .update({ device_token_hash: null, paired_at: null })
     .eq('id', id.data);
   revalidatePath('/admin/kiosks');
-  back('/admin/kiosks', 'Tablet odpojený — spáruje sa znova kódom.');
+  back('/admin/kiosks', 'Tablet odhlásený — prihlási sa znova kódom a PIN-om.');
 }
 
 export async function toggleKiosk(formData: FormData) {

@@ -2,6 +2,49 @@
 
 Odškrtnuté = hotové a overené. Neodškrtnuté = zostáva dokončiť.
 
+## Sprint: prihlásenie do prevádzky
+
+- [x] Kiosk sa už neotvára sám — vyžaduje kód prevádzky a PIN (`0025`)
+- [x] Session platí 12 hodín, platnosť sa kontroluje na serveri
+- [x] Odhlásenie prevádzky zneplatní token aj v databáze
+- [x] Neutrálna chybová hláška, konštantné správanie pri neznámom kóde
+- [x] `pin_hash` a `device_token_hash` nečitateľné cez API
+- [x] Nastavenie PIN-u v administrácii + výstraha pri tablete bez PIN-u
+- [x] Regresné testy izolácie tabletov medzi firmami
+- [ ] Nastaviť PIN produkčnému tabletu „Bistro Kalša" (Admin → Kiosky)
+
+## Sprint: bezpečnostný audit pred predajom
+
+Každý nález overený reálnym dotazom pod rolou útočníka pred opravou aj po nej.
+
+- [x] Globálne limity (`rules`) sa nedajú meniť cez API — dovtedy ich mohol
+      prepísať aj zmazať admin ktorejkoľvek firmy
+- [x] Pozvánka už neprepisuje heslo existujúceho účtu (prevzatie cudzieho konta)
+- [x] PIN sa overuje aj voči prevádzke, nielen firme
+- [x] Limit pokusov na párovanie tabletu a na registráciu firmy
+- [x] `pin_clear_attempts` overuje firmu volajúceho
+- [x] Rozvrh sa nedá naviazať na zariadenie cudzej firmy
+- [x] Merania sa nedajú zapísať mimo kiosku (bez PIN-u pracovníka)
+- [x] Neutralizované vzorce v CSV exporte, čísla zostali číslami
+- [x] Párovací kód cez `crypto.randomInt`, minimálne 6 znakov
+- [x] Zjednotená platnosť pravidla medzi aplikáciou a DB (`valid_to >= dnes`)
+- [x] Vyhodnotenie limitu v jednom module namiesto troch kópií
+- [x] Prvé testy v projekte: `vitest`, 32 unit testov
+- [x] Regresný SQL test izolácie zápisov (8/8 PASS, self-contained)
+- [x] `/api/health` vrátane kontroly spojenia s DB
+- [x] Indexy na horúce cesty, slovenská 404, zálohovanie v README
+- [x] E2E testy (Playwright) — kiosk flow, párovanie, izolácia prevádzok,
+      offline fronta, responzivita na mobile
+- [x] CI workflow: typecheck, unit testy, build, SQL izolácia, E2E nad
+      jednorazovou databázou
+- [x] Seed pre lokálny vývoj a testy (`supabase/seed.sql`)
+- [x] Podklad pre právnu verifikáciu limitov (`docs/LIMITY-NA-OVERENIE.md`)
+- [ ] Zapnúť leaked password protection (Supabase Dashboard, nedá sa z kódu)
+- [ ] Právna verifikácia limitov (externý odborník) — podklad je pripravený
+- [x] CI zelené: 22/22 E2E testov, 35 unit testov, SQL izolácia 8/8
+- [x] Odstránený drift medzi produkciou a migráciami (0020–0023)
+- [x] PDF report pre kontrolu vrátane slovenskej diakritiky
+
 ## Sprint: anonymita pobočiek a revízia aplikácie
 
 - [x] Zamestnanci viazaní na prevádzky (`membership_locations`)

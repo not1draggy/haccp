@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  kvalita:
+    name: Typecheck, unit testy, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          # Build potrebuje premenné, ale nie funkčnú DB — hodnoty sú placeholder.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: build-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: build-placeholder
+
+  e2e:
+    name: E2E (kiosk flow v prehliadači)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Verzia je pripnutá zámerne. `latest` sa pýta GitHub API a pri anonymnom
+      # volaní naráža na limit — CI potom padne na veci, ktorá s kódom nesúvisí.
+      # Druhý dôvod: nová verzia CLI už raz zmenila formát API kľúčov a zhodila
+      # beh; upgrade nech je vedomý krok, nie prekvapenie v cudzom PR.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      # Jednorazová databáza. Merania sú append-only a nedajú sa zmazať,
+      # takže E2E testy nesmú bežať proti ostrému projektu — testovacie
+      # záznamy by navždy zostali v audite zákazníka.
+      - name: Spustiť lokálny Supabase
+        run: supabase start -x studio,realtime,storage-api,imgproxy,logflare,vector,supavisor,edge-runtime
+
+      # `supabase status -o env` vracia hodnoty v úvodzovkách; do GITHUB_ENV
+      # sa musia dostať bez nich, inak sa úvodzovky stanú súčasťou kľúča.
+      - name: Načítať prístupové údaje lokálneho stacku
+        run: supabase status -o env | tr -d '"' | sed 's/^/E2E_/' >> "$GITHUB_ENV"
+
+      # PASS/FAIL sú v tomto skripte dáta, nie chyby SQL — bez tejto kontroly
+      # by regresia v izolácii firiem prešla CI ako úspech.
+      # PASS/FAIL sú v týchto skriptoch dáta, nie chyby SQL — bez explicitnej
+      # kontroly by regresia prešla CI ako úspech.
+      # `rls_isolation_test.sql` sa zámerne nespúšťa: vyžaduje ručne doplnené
+      # UUID existujúceho tenanta, takže v čistej databáze nemá čo overovať.
+      - name: SQL regresné testy (izolácia firiem, limity pokusov)
+        run: |
+          for t in write_isolation_test rate_limit_test; do
+            echo "── $t"
+            psql "$E2E_DB_URL" -v ON_ERROR_STOP=1 \
+              -f "supabase/tests/$t.sql" | tee "/tmp/$t.out"
+            if grep -q FAIL "/tmp/$t.out"; then
+              echo "::error::Regresia v $t"
+              exit 1
+            fi
+          done
+
+      - name: Nainštalovať prehliadač pre Playwright
+        run: npx playwright install --with-deps chromium
+
+      # Supabase prechádza zo starých JWT kľúčov (anon / service_role) na nové
+      # (sb_publishable_ / sb_secret_) a ktoré sú aktívne, závisí od verzie CLI.
+      # Poslať vypnutý kľúč nekončí chybou o kľúči — požiadavka prejde ako
+      # anonymná a spadne až na `permission denied`, čo vyzerá ako chyba práv.
+      # Preto kľúč nehádame podľa názvu premennej, ale overíme ho dotazom.
+      # Supabase prechádza zo starých JWT kľúčov (anon / service_role) na nové
+      # (sb_publishable_ / sb_secret_) a ktoré sú aktívne, závisí od verzie CLI.
+      # Poslať vypnutý kľúč nekončí zrozumiteľnou chybou — požiadavka prejde
+      # ako anonymná a spadne až na `permission denied`, čo vyzerá ako problém
+      # s právami. Preto kľúč nehádame podľa názvu, ale overíme ho dotazom.
+      - name: Zistiť, ktoré kľúče lokálny stack prijíma
+        run: |
+          echo "Práva na public.rules v lokálnej databáze:"
+          psql "$E2E_DB_URL" -At -c "select grantee || ': ' || string_agg(privilege_type, ',' order by privilege_type) from information_schema.role_table_grants where table_schema='public' and table_name='rules' and grantee in ('anon','authenticated','service_role','postgres') group by grantee order by grantee;" \
+            | sed 's/^/  /'
+
+          vyskusaj() {
+            local popis="$1" cesta="$2"; shift 2
+            for nazov in "$@"; do
+              local kluc="${!nazov}"
+              if [ -z "$kluc" ]; then continue; fi
+              local kod telo
+              telo=$(curl -s -o /tmp/odpoved -w '%{http_code}' \
+                -H "apikey: $kluc" -H "Authorization: Bearer $kluc" \
+                "$E2E_API_URL$cesta") || true
+              kod="$telo"
+              echo "  $popis / $nazov -> HTTP $kod  $(head -c 220 /tmp/odpoved)"
+              if [ "$kod" = "200" ]; then
+                echo "$popis=$kluc" >> "$GITHUB_ENV"
+                return 0
+              fi
+            done
+            echo "::error::Pre $popis nefunguje ani jeden kľúč"
+            return 1
+          }
+
+          # `rules` číta kiosk cez service role, takže 200 musí vrátiť.
+          echo "Kľúče proti /rest/v1/rules:"
+          vyskusaj SERVICE_KEY "/rest/v1/rules?select=id&limit=1" \
+            E2E_SECRET_KEY E2E_SERVICE_ROLE_KEY
+          echo "Kľúče proti /auth/v1/settings:"
+          vyskusaj ANON_KEY "/auth/v1/settings" \
+            E2E_PUBLISHABLE_KEY E2E_ANON_KEY
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_KEY }}
+
+      - name: Playwright
+        run: npx playwright test
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.E2E_API_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

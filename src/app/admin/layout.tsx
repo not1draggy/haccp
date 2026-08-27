@@ -102,8 +102,11 @@ export default async function AdminLayout({
           ))}
         </nav>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">
-        {(locations?.length ?? 0) === 0 ? (
+      <main className="mx-auto max-w-5xl space-y-6 px-4 py-6">
+        {/* Upozornenie sa pridáva nad obsah, nie namiesto neho — inak by sa
+            zakryl aj formulár na stránke Prevádzky, teda jediné miesto, kde
+            sa dá chýbajúca prevádzka vytvoriť. */}
+        {(locations?.length ?? 0) === 0 && (
           <div
             role="status"
             className="rounded-2xl border border-warn/30 bg-warn/5 p-6 text-center"
@@ -118,9 +121,8 @@ export default async function AdminLayout({
               .
             </p>
           </div>
-        ) : (
-          children
         )}
+        {children}
       </main>
     </div>
   );

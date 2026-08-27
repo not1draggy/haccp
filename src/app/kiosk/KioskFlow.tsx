@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import {
   dequeue,
@@ -9,7 +10,13 @@ import {
   queueSupported,
   type QueuedMeasurement,
 } from '@/lib/kiosk/offline-queue';
-import { skipCheck, submitMeasurement, verifyPin, type SubmitResult } from './actions';
+import {
+  logoutKiosk,
+  skipCheck,
+  submitMeasurement,
+  verifyPin,
+  type SubmitResult,
+} from './actions';
 
 export type KioskEmployee = { id: string; display_name: string };
 export type KioskDevice = {
@@ -92,6 +99,7 @@ export default function KioskFlow({
   employees: KioskEmployee[];
   devices: KioskDevice[];
 }) {
+  const router = useRouter();
   const [step, setStep] = useState<Step>('employee');
   const [employee, setEmployee] = useState<KioskEmployee | null>(null);
   const [pin, setPin] = useState('');
@@ -423,7 +431,22 @@ export default function KioskFlow({
         >
           {step === 'pin' ? 'Zrušiť' : 'Odhlásiť'}
         </button>
-      ) : null}
+      ) : (
+        // Odhlásiť celú prevádzku sa dá len vtedy, keď nikto nemeria —
+        // uprostred merania by to bolo tlačidlo, ktoré zahodí rozrobenú prácu.
+        <button
+          type="button"
+          onClick={() => {
+            startTransition(async () => {
+              await logoutKiosk();
+              router.refresh();
+            });
+          }}
+          className="rounded-lg bg-white/10 px-4 py-2 text-sm text-white/70 transition-colors duration-150 active:bg-white/20"
+        >
+          Odhlásiť prevádzku
+        </button>
+      )}
     </header>
   );
 

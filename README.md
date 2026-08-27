@@ -12,6 +12,7 @@ kiosk režim pre kuchyňu, izolácia medzi pobočkami.
 | `DONE.md` | Aktuálny sprint a hotové položky |
 | `CHANGELOG.md` | História zmien |
 | `docs/ARCHITECTURE.md` | Architektúra a zdôvodnenie rozhodnutí |
+| `docs/LIMITY-NA-OVERENIE.md` | Podklad pre právnu verifikáciu limitov |
 
 ## Stack
 
@@ -23,7 +24,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind · Supabase (Postgres + Auth) 
 
 1. Vytvor projekt na [supabase.com](https://supabase.com) (región `eu-central-1`).
 2. SQL Editor → spusti migrácie z `supabase/migrations/` **v poradí**:
-   `0001` až `0014` (poradie je dôležité — neskoršie stavajú na skorších).
+   `0001` až `0025` (poradie je dôležité — neskoršie stavajú na skorších).
 3. *(Odporúčané, nie povinné)* **Authentication → Hooks → Customize Access
    Token (JWT) Claims** → schéma `public`, funkcia `custom_access_token_hook`.
    Hook vloží `tenant_id` priamo do tokenu a ušetrí jeden dotaz pri každej
@@ -48,36 +49,41 @@ git push               # repo pripojené na Vercel
 # alebo: npx vercel --prod
 ```
 
-### 4. Onboarding prvého tenanta (SQL Editor)
+### 4. Onboarding prvého tenanta
 
-```sql
--- Firma + prvá prevádzka
-insert into tenants (id, name) values
-  ('11111111-1111-1111-1111-111111111111', 'Názov firmy');
+Otvor `/registracia` a vyplň formulár. Vznikne naraz účet, firma, prvá
+prevádzka, jej tablet aj členstvo admina — **zásah do databázy netreba**.
 
-insert into locations (id, tenant_id, name) values
-  ('22222222-2222-2222-2222-222222222222',
-   '11111111-1111-1111-1111-111111111111', 'Hlavná prevádzka');
+Zvyšok už pridávaš v administrácii — vrátane názvu firmy, ďalších prevádzok
+(tablet a párovací kód sa vytvoria automaticky), zariadení, zamestnancov
+a rozvrhov.
 
--- Admin: najprv vytvor používateľa v Authentication → Users (email+heslo),
--- skopíruj jeho UUID a vlož sem:
-insert into memberships (tenant_id, user_id, role, display_name) values
-  ('11111111-1111-1111-1111-111111111111',
-   'AUTH_USER_UUID', 'tenant_admin', 'Meno správcu');
+### 4b. Overenie po nasadení
+
+```bash
+curl -s https://tvoja-domena.sk/api/health
+# {"status":"ok","checks":{"app":"ok","database":"ok","config":"ok"},...}
 ```
 
-Zvyšok už pridávaš **v administrácii**, nie cez SQL — vrátane názvu firmy,
-ďalších prevádzok (tablet a párovací kód sa vytvoria automaticky), zariadení,
-zamestnancov a rozvrhov.
+Vráti `503` a `"status":"degraded"`, ak chýba premenná prostredia alebo
+nefunguje spojenie s databázou. Vhodné ako endpoint pre monitoring —
+appka bez DB vyzerá zvonku živá, ale kuchyňa cez ňu nezapíše ani meranie.
 
 ### 5. Spustenie kiosku
 
-1. Párovací kód nájdeš v administrácii → **Prevádzky** (vytvorí sa spolu
-   s prevádzkou) alebo → **Kiosky**, kde vieš pridať ďalší tablet.
-2. Na tablete otvor `https://tvoja-domena.sk/kiosk` a zadaj kód — tablet
-   zostane spárovaný natrvalo.
-3. Flow merania: meno → PIN → zariadenie → teplota. PIN sa zadáva **raz za
-   session**, ďalšie merania idú bez prerušenia. Cieľ < 10 sekúnd.
+1. V administrácii → **Kiosky** nastav tabletu **PIN prevádzky**. Bez neho sa
+   kiosk neprihlási — je to zámerné, aby na otvorenie kuchyne nestačil
+   samotný kód.
+2. Tam nájdeš aj **kód prevádzky**. Kuchyňa potrebuje oboje.
+3. Na tablete otvor `https://tvoja-domena.sk/kiosk`, zadaj kód a PIN.
+   Prihlásenie platí **12 hodín** (jedna zmena), potom sa zadáva znova.
+   Tlačidlo **Odhlásiť prevádzku** ho ukončí okamžite.
+4. Flow merania: meno → PIN pracovníka → zariadenie → teplota. PIN pracovníka
+   sa zadáva **raz za session**, ďalšie merania idú bez prerušenia.
+   Cieľ < 10 sekúnd.
+
+Dva PIN-y majú rôzne úlohy a nezamieňajú sa: **PIN prevádzky** púšťa tablet
+do kuchyne, **PIN pracovníka** podpisuje konkrétne meranie do denníka.
 
 Admin rozhranie: `/login` → `/admin`.
 
@@ -85,24 +91,79 @@ Admin rozhranie: `/login` → `/admin`.
 
 - **Admini**: Supabase Auth session, RLS podľa tenanta. Tenant sa rieši
   dvojstupňovo — claim z JWT, inak lookup členstva podľa `auth.uid()`.
-- **Kuchyňa**: žiadne osobné sessions. Tablet drží device token (httpOnly
-  cookie, SHA-256 hash v DB), zápisy idú cez server actions so service role
-  a explicitným tenant/location scopingom. PIN overuje identitu pracovníka
-  pre audit záznam — kontroluje sa aj pri samotnom zápise, nielen pri
-  odomknutí session.
+- **Kuchyňa**: žiadne osobné sessions. Do prevádzky sa tablet prihlási
+  **kódom prevádzky a PIN-om** (bcrypt hash v DB); session drží device token
+  (httpOnly cookie, SHA-256 hash v DB) a platí 12 hodín — platnosť sa
+  kontroluje na serveri, nie cez `maxAge` cookie. Zápisy idú cez server
+  actions so service role a explicitným tenant/location scopingom. PIN
+  pracovníka overuje identitu pre audit záznam — kontroluje sa aj pri
+  samotnom zápise, nielen pri odomknutí session.
 - **Merania a nápravné opatrenia**: append-only na úrovni DB (trigger +
   odobraté grants).
 - **Audit**: každá mutácia governed tabuliek → `audit_log`, do ktorého sa
   nedá písať priamo.
+
+## Zálohovanie a obnova
+
+Merania sú append-only a tvoria podklad pre kontrolu — ich strata sa nedá
+nahradiť dodatočným zápisom. Pred ostrou prevádzkou over v Supabase
+(Database → Backups):
+
+- **Denné zálohy** sú na pláne Free len 7 dní a **bez Point-in-Time
+  Recovery**. Pre platiacich zákazníkov je potrebný aspoň plán Pro s PITR —
+  bez neho sa dá vrátiť nanajvýš na včerajšok.
+- **Obnovu si raz vyskúšaj** na kópii projektu. Záloha, ktorú nikto nikdy
+  neobnovil, je predpoklad, nie záloha.
+- `audit_log`, `measurements` a `corrective_actions` sú nemenné; obnova sa
+  preto robí vždy na úrovni celej databázy, nie jednotlivých riadkov.
 
 ## Vývoj
 
 ```bash
 npm install
 npm run dev
+npm test            # unit testy (vitest)
 npm run typecheck   # musí prejsť pred commitom
 npm run build       # musí prejsť pred commitom
 ```
+
+### E2E testy (Playwright)
+
+Kiosk flow je jediná cesta, ktorou v produkte vzniká meranie, takže ho
+overujeme v skutočnom prehliadači — vrátane tabletového viewportu a výpadku
+pripojenia.
+
+```bash
+npx supabase start   # jednorazová DB, sama načíta migrácie aj supabase/seed.sql
+npm run build
+npm run test:e2e     # alebo: npm run test:e2e:ui
+```
+
+> ⚠️ **Nikdy nespúšťaj E2E proti ostrému projektu.** Testy zapisujú merania,
+> ktoré sú append-only a nedajú sa zmazať — testovacie záznamy by navždy
+> zostali v audite zákazníka.
+
+Seed (`supabase/seed.sql`) vytvára firmu s dvoma prevádzkami, kódom prevádzky
+`E2ETEST` s PIN-om `9876` a zamestnancom s PIN-om `4321`. Druhá prevádzka je
+tam zámerne — testy overujú, že sa jej zamestnanci ani zariadenia na tablete
+prvej prevádzky **neobjavia**.
+
+Všetko spolu beží aj v CI (`.github/workflows/ci.yml`): typecheck, unit testy,
+build, SQL testy izolácie a E2E nad čerstvou databázou.
+
+### Bezpečnostné testy (SQL)
+
+Skripty v `supabase/tests/` sa spúšťajú v SQL Editore, bežia v transakcii
+ukončenej ROLLBACKom a v DB po nich nič nezostane:
+
+| Súbor | Čo overuje |
+| --- | --- |
+| `rls_isolation_test.sql` | Že firma nevidí dáta inej firmy (čítanie). Pred spustením treba doplniť dve UUID. |
+| `write_isolation_test.sql` | Že sa nedá zapísať mimo vlastnej firmy (globálne limity, rozvrhy, merania, reset PIN pokusov, PIN a odhlásenie cudzieho tabletu). Self-contained. Beží v CI. |
+| `rate_limit_test.sql` | Že limit pokusov naozaj limituje — pri registrácii aj úspešné pokusy, pri prihlásení tabletu iba neúspešné. Self-contained. Beží v CI. |
+
+Po každej zmene schémy spusti oba a zároveň `get_advisors` (security aj
+performance).
 
 Pracovné režimy sú v `.claude/commands/` (`/continue`, `/audit`, `/bugfix`,
 `/review`, `/refactor`, `/plan`, `/docs`, `/release`).
@@ -113,10 +174,22 @@ Hotové: schéma + RLS + audit + verzované pravidlá, kiosk flow bez prerušova
 PIN-om, offline fronta meraní, rate limiting PIN-u, rozvrhy a evidencia
 zmeškaných kontrol, viac prevádzok s izoláciou medzi nimi, pozvánky adminov,
 kompletná administrácia (zariadenia, limity, zamestnanci, kiosky, história),
-alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline.
+alarmy s nápravnými opatreniami, CSV export pre kontrolu, deploy pipeline,
+unit + E2E + SQL testy v CI.
 
-Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · E2E testy
-v CI · adminovia obmedzení na jednu prevádzku.
+Ďalšie fázy podľa `ROADMAP.md`: PDF reporty · foto k meraniu · notifikácie
+pri zmeškaní · adminovia obmedzení na jednu prevádzku.
 
-⚠️ Limity v seede (`0002`) sú štandardné SK/EU hodnoty, ale **pred predajom
-vyžadujú právnu verifikáciu** a doplnenie `legal_ref` citácií.
+### Pred predajom prvému zákazníkovi
+
+Tri veci, ktoré sa nedajú vyriešiť kódom a musí ich niekto rozhodnúť:
+
+1. ⚠️ **Právna verifikácia limitov.** Hodnoty v seede (`0002`) sú štandardné
+   SK/EU teploty, ale nemajú doplnené `legal_ref` citácie a neprešli
+   kontrolou odborníka. Denník, ktorý vyhodnocuje podľa neoverených limitov,
+   je pri kontrole napadnuteľný. Podklad pre odborníka je pripravený
+   v `docs/LIMITY-NA-OVERENIE.md`.
+2. **Zapnúť leaked password protection** (Authentication → Passwords).
+   Odkedy je registrácia verejná, heslo si volí zákazník a jediná kontrola
+   je minimálna dĺžka 8 znakov.
+3. **Zálohovanie s PITR** podľa sekcie vyššie.

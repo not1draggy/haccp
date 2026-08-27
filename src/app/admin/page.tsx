@@ -1,6 +1,7 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
 import { addCorrectiveAction } from './manage-actions';
+import { denVPasme } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ function formatTime(iso: string) {
 }
 
 function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  return denVPasme(d);
 }
 
 function StatusBadge({ status }: { status: 'ok' | 'alarm' }) {
@@ -377,7 +378,8 @@ export default async function AdminDashboard({
       <section className="rounded-2xl bg-white p-6 shadow-sm">
         <h2 className="text-lg font-bold">Export pre kontrolu</h2>
         <p className="mt-1 text-sm text-steel/60">
-          CSV so všetkými meraniami a nápravnými opatreniami za zvolené obdobie.
+          PDF je podpísateľný podklad pre kontrolu, CSV slúži na ďalšie
+          spracovanie. Obe obsahujú merania aj nápravné opatrenia za obdobie.
         </p>
         <form
           action="/admin/export"
@@ -402,12 +404,21 @@ export default async function AdminDashboard({
               className="mt-1 w-full rounded-lg border border-steel/20 px-3 py-2 focus:border-steel focus:outline-none"
             />
           </label>
-          <button
-            type="submit"
-            className="self-end rounded-lg bg-steel px-5 py-2 font-semibold text-white transition-colors duration-150 hover:bg-ink"
-          >
-            Stiahnuť CSV
-          </button>
+          <div className="flex gap-2 self-end">
+            <button
+              type="submit"
+              formAction="/admin/report"
+              className="rounded-lg bg-steel px-5 py-2 font-semibold text-white transition-colors duration-150 hover:bg-ink"
+            >
+              Report (PDF)
+            </button>
+            <button
+              type="submit"
+              className="rounded-lg border-2 border-steel px-5 py-2 font-semibold text-steel transition-colors duration-150 hover:bg-steel hover:text-white"
+            >
+              CSV
+            </button>
+          </div>
         </form>
       </section>
     </div>

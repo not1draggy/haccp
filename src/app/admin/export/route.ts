@@ -1,5 +1,7 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
+import { CSV_BOM, csvRow } from '@/lib/export/csv';
+import { denVPasme, koniecDna, zaciatokDna } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,19 +13,6 @@ type ExportRow = {
   memberships: { display_name: string } | null;
   corrective_actions: { action: string; created_at: string }[] | null;
 };
-
-/**
- * Excel v slovenskom locale očakáva bodkočiarku ako oddeľovač a bez BOM
- * zobrazí diakritiku ako "ChladniÄka". Oboje je tu zámerné.
- */
-const DELIMITER = ';';
-const BOM = '﻿';
-
-function csvCell(value: string | number | null | undefined): string {
-  if (value == null) return '';
-  const s = String(value);
-  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('sk-SK', {
@@ -51,10 +40,12 @@ export async function GET(request: Request) {
   const toParam = url.searchParams.get('to');
 
   // Predvolene posledných 31 dní — bežné obdobie pre mesačnú kontrolu.
+  // Hranice sa počítajú v prevádzkovom pásme — inak by report za august
+  // začínal až o 02:00 prvého augusta a merania z nočnej zmeny vypadli.
   const from = fromParam
-    ? new Date(`${fromParam}T00:00:00`)
+    ? zaciatokDna(fromParam)
     : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-  const to = toParam ? new Date(`${toParam}T23:59:59.999`) : new Date();
+  const to = toParam ? koniecDna(toParam) : new Date();
 
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
     return new Response('Neplatné obdobie', { status: 400 });
@@ -88,9 +79,9 @@ export async function GET(request: Request) {
   ];
 
   const lines = [
-    header.map(csvCell).join(DELIMITER),
+    csvRow(header),
     ...rows.map((r) =>
-      [
+      csvRow([
         formatDateTime(r.measured_at),
         r.devices?.name ?? '',
         // Desatinná čiarka — sk Excel inak číslo neinterpretuje ako číslo.
@@ -100,17 +91,13 @@ export async function GET(request: Request) {
         (r.corrective_actions ?? [])
           .map((a) => `${formatDateTime(a.created_at)}: ${a.action}`)
           .join(' | '),
-      ]
-        .map(csvCell)
-        .join(DELIMITER),
+      ]),
     ),
   ];
 
-  const filename = `haccp-merania-${from.toISOString().slice(0, 10)}_${to
-    .toISOString()
-    .slice(0, 10)}.csv`;
+  const filename = `haccp-merania-${denVPasme(from)}_${denVPasme(to)}.csv`;
 
-  return new Response(BOM + lines.join('\r\n'), {
+  return new Response(CSV_BOM + lines.join('\r\n'), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${filename}"`,

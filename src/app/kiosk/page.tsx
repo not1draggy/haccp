@@ -1,7 +1,9 @@
 import { getKioskSession } from '@/lib/kiosk/session';
 import { createServiceClient } from '@/lib/supabase/service';
+import { resolveLimits } from '@/lib/haccp/limits';
 import KioskFlow, { type KioskDevice, type KioskEmployee } from './KioskFlow';
-import PairForm from './PairForm';
+import LoginForm from './LoginForm';
+import { dnesIso, jeRovnakyDen } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,11 +11,11 @@ export default async function KioskPage() {
   const session = await getKioskSession();
 
   if (!session) {
-    return <PairForm />;
+    return <LoginForm />;
   }
 
   const supabase = createServiceClient();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dnesIso();
 
   const [
     { data: employeeRows },
@@ -43,7 +45,7 @@ export default async function KioskPage() {
       .from('rules')
       .select('device_type_id, min_c, max_c, valid_from')
       .lte('valid_from', todayIso)
-      .or(`valid_to.is.null,valid_to.gt.${todayIso}`)
+      .or(`valid_to.is.null,valid_to.gte.${todayIso}`)
       .order('valid_from', { ascending: false }),
     supabase
       .from('measurements')
@@ -92,19 +94,18 @@ export default async function KioskPage() {
     const history = historyByDevice.get(d.id) ?? [];
     const last = history[0];
     const prev = history[1];
+    const { minC, maxC } = resolveLimits(d, rule);
     return {
       id: d.id,
       name: d.name,
       type_name: type?.name ?? '',
-      minC: d.min_c != null ? Number(d.min_c) : rule?.min_c != null ? Number(rule.min_c) : null,
-      maxC: d.max_c != null ? Number(d.max_c) : rule?.max_c != null ? Number(rule.max_c) : null,
+      minC,
+      maxC,
       lastValue: last ? Number(last.value_c) : null,
       prevValue: prev ? Number(prev.value_c) : null,
       lastStatus: last?.status ?? null,
       lastAt: last?.measured_at ?? null,
-      measuredToday: last
-        ? new Date(last.measured_at).toDateString() === new Date().toDateString()
-        : false,
+      measuredToday: last ? jeRovnakyDen(last.measured_at) : false,
       dueToday: scheduled.has(d.id),
     };
   });

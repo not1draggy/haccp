@@ -23,6 +23,12 @@ export default function HomePage() {
           Prihlásenie (admin)
         </Link>
       </div>
+      <p className="text-sm text-steel/60">
+        Nová firma?{' '}
+        <Link href="/registracia" className="font-semibold text-ink underline">
+          Založ si účet
+        </Link>
+      </p>
     </main>
   );
 }

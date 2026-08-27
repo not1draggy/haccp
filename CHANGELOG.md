@@ -2,6 +2,190 @@
 
 Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-08-27
+
+### Zmenené — vstup do kiosku
+
+- **Kiosk sa otváral sám do naposledy použitej prevádzky.** Nebolo to
+  zadrátované v kóde — žiadny názov prevádzky v ňom nie je — ale device token
+  v cookie platil rok a nič ho neoveroval. Kto sa raz dostal k tabletu alebo
+  ku kódu, mal prevádzku otvorenú natrvalo.
+
+  Vstup je odteraz **kód prevádzky + PIN** (`0025`). PIN je bcrypt hash na
+  `kiosk_devices`, session platí 12 hodín a **platnosť sa kontroluje na
+  serveri**, nie cez `maxAge` cookie — tú drží prehliadač a ukradnutý token by
+  sa dal prehrať aj po vypršaní. Odhlásenie zneplatní token aj v databáze.
+
+- **Neutrálna hláška.** „Nesprávny kód prevádzky alebo PIN." nerozlišuje, či
+  bol zlý kód alebo PIN, a porovnanie hashu prebehne aj pri neznámom kóde —
+  inak by sa zoznam prevádzok dal zistiť hádaním kódov alebo meraním času
+  odpovede. Limit pokusov (10 / 15 min per IP) zostal.
+
+- **`pin_hash` ani `device_token_hash` už nie sú čitateľné cez API** ani pre
+  prihláseného admina. Column-level REVOKE je pri table-level grante bez
+  účinku, preto sa právo odoberá celé a vracia výpočtom stĺpcov — nový stĺpec
+  tejto tabuľky tým nebude čitateľný automaticky. Administrácia vidí iba
+  odvodené `pin_set`.
+
+- **Migrácia zámerne žiadny PIN nevymýšľa.** Vygenerovaný PIN by nikto
+  nepoznal a kuchyňu by to zablokovalo bez vysvetlenia. Existujúce tablety
+  majú `pin_hash = NULL`, prihlásenie sa odmietne a administrácia ich označí
+  výstrahou „PIN nie je nastavený".
+
+- UI zostalo nezmenené: domovská obrazovka je rovnaká, prihlásenie používa ten
+  istý vizuálny jazyk ako pôvodné párovanie, pribudlo jedno pole.
+
+## [0.7.0] — 2026-08-18
+
+### Pridané
+
+- **E2E testy (Playwright)** — kiosk flow je jediná cesta, ktorou v produkte
+  vzniká meranie, a doteraz ho neoverovalo nič automatické. Testy pokrývajú
+  celý flow (párovanie → pracovník → PIN → zariadenie → hodnota), serverové
+  vyhodnotenie limitu, izoláciu prevádzok priamo v prehliadači, výpadok
+  pripojenia a responzivitu na mobile. Kiosk beží v tabletovom viewporte —
+  testovať ho na desktope by minulo presne tie chyby, čo sa prejavia
+  v kuchyni.
+- **CI workflow** — typecheck, unit testy, build, SQL testy izolácie a E2E nad
+  jednorazovou databázou. FAIL v SQL testoch zhodí build (PASS/FAIL sú v tom
+  skripte dáta, nie chyby SQL, takže bez explicitnej kontroly by regresia
+  prešla ako úspech).
+- **Seed pre lokálny vývoj** (`supabase/seed.sql`) s druhou prevádzkou
+  navyše — testy na nej overujú, že sa jej zamestnanci ani zariadenia na
+  tablete prvej prevádzky neobjavia.
+- **Podklad pre právnu verifikáciu limitov** (`docs/LIMITY-NA-OVERENIE.md`)
+  — tabuľka všetkých limitov s návrhmi zdrojov na overenie, zreteľne
+  označenými ako neoverené, plus postup zápisu výsledku.
+
+### Opravené — drift medzi produkciou a migráciami
+
+Prvý ostrý beh E2E odhalil, že schéma v migráciách nezodpovedala produkcii.
+Každý z týchto nálezov by sa naplno prejavil až pri obnove zálohy do nového
+projektu — teda presne vtedy, keď na tom najviac záleží.
+
+- **Trigger `measurements_resolve` a funkcia `effective_limits` neboli
+  v žiadnej migrácii** (`0021`). Práve ony presadzujú invariant, na ktorom
+  stojí dôveryhodnosť denníka: status a limity počíta server, klientovi sa
+  verí len nameraná hodnota. V čistej databáze prešlo meranie 12,5 °C
+  v chladničke s limitom 0–5 °C so stavom `ok`, ktorý poslal klient —
+  a aplikácia pritom vyzerala, že funguje správne.
+- **Stĺpce `measurements.min_c_applied` a `max_c_applied` chýbali** (`0022`).
+  Zapisuje do nich ten istý trigger, takže bez nich zlyhal každý zápis
+  merania. Držia limit platný v čase merania: vlastný limit zariadenia nie je
+  verzovaný, takže bez nich by sa spätne nedalo doložiť, prečo bol starý
+  záznam vyhodnotený ako alarm.
+- **Schéma sa spoliehala na to, že Supabase pridelí API rolám práva sama**
+  (`0020`). Na hostovanom projekte to platí, v čistej databáze nie —
+  `service_role` tam nedostal ani SELECT.
+- **Zmazané mŕtve `set_pin` a `verify_pin`** (`0023`). Aplikácia ich nevolá
+  (PIN rieši `bcryptjs` v Node), ale `verify_pin` overovala PIN bez zápisu do
+  `pin_attempts`, teda obchádzala ochranu proti hádaniu PIN-u z `0008`.
+
+Kompletná kontrola: porovnané všetky tabuľky, stĺpce a funkcie produkcie proti
+migráciám; okrem vyššie uvedeného drift nie je. Všetky štyri migrácie sú
+v produkcii no-op (overené odtlačkom práv a existenciou objektov).
+
+### Opravené — revízia vlastnej práce
+
+Po zazelenaní CI som prešiel celú vetvu ešte raz. Tri nálezy, všetky
+v kóde, ktorý pribudol v tomto sprinte:
+
+- **Limit registrácie nelimitoval nič.** `rate_limit_locked_seconds` počítala
+  iba NEÚSPEŠNÉ pokusy. Pri párovaní tabletu je to správne (zneužitím je
+  hádanie kódu), pri registrácii firmy je to však presne naopak — zneužitím
+  JE úspech. Skript, ktorému každý pokus vyšiel, nezapísal ani jeden neúspech,
+  takže počítadlo zostávalo na nule. Overené na produkcii: 20 úspešných
+  registrácií z jednej IP vrátilo `locked_seconds = 0`. Opravené v `0024`,
+  regresný test je v `supabase/tests/rate_limit_test.sql` a beží v CI.
+- **Limit sa dal obísť podvrhnutou hlavičkou.** IP sa brala z ľavého konca
+  `x-forwarded-for`, ktorý pochádza od klienta — stačilo si pri každom pokuse
+  vymyslieť inú. Teraz sa uprednostňujú hlavičky, ktoré klient neovplyvní,
+  a z `x-forwarded-for` sa berie pravý koniec.
+- **„Dnešok" sa počítal v UTC.** Zobrazovanie už `Europe/Bratislava`
+  používalo, ale hranice dňa nie. Meranie o 00:30 miestneho času tak spadlo do
+  predošlého dňa a report za august začínal až o 02:00 prvého augusta —
+  merania z nočnej zmeny do neho nevošli. Pri zázname, ktorý má obstáť pri
+  kontrole, je „ktorý deň to bolo" súčasť dôkazu. Zjednotené v
+  `src/lib/haccp/cas.ts` vrátane letného aj zimného času.
+
+### Overenie
+
+CI zelené: 22/22 E2E testov (kiosk flow, párovanie, serverové vyhodnotenie
+limitu, izolácia prevádzok, offline fronta, verejné stránky, responzivita),
+35 unit testov, SQL testy izolácie 8/8, typecheck aj build.
+
+## [0.6.0] — 2026-08-12
+
+Bezpečnostný audit celej aplikácie. Každý nález nižšie bol pred opravou
+overený reálnym dotazom pod rolou útočníka; regresné testy sú v
+`supabase/tests/write_isolation_test.sql` (8/8 PASS).
+
+### Bezpečnosť — kritické
+
+- **Admin ktorejkoľvek firmy mohol prepísať a zmazať globálne limity**
+  (migrácia `0016`). Tabuľka `rules` je spoločná pre celú platformu a drží
+  hodnoty, podľa ktorých sa vyhodnocuje meranie každého zákazníka; policy
+  však vyžadovala iba rolu `tenant_admin`, bez akéhokoľvek scopingu. Overené:
+  UPDATE aj DELETE prešli. Následok by bol tichý — meranie by sa naďalej
+  zapisovalo, len podľa podvrhnutého limitu, takže presne to, čo má denník
+  pri kontrole dokazovať, by prestalo platiť. Limity sú legislatíva, nie
+  zákaznícke nastavenie: cez API ich už nemení nikto, menia sa migráciou.
+- **Pozvánka sa dala použiť na prevzatie cudzieho účtu.** `acceptInvitation`
+  prepisovalo heslo, ak účet s daným emailom už existoval. Email pozvánky si
+  volí pozývajúci admin, takže stačilo pozvať adresu admina inej firmy,
+  odkaz si otvoriť a nastaviť mu heslo. Pozvánka odteraz udeľuje prístup
+  k firme, ale nikdy nemení prihlasovacie údaje; majiteľ existujúceho účtu
+  sa prihlási svojím heslom.
+
+### Bezpečnosť — vysoké
+
+- **PIN sa neoveroval voči prevádzke.** Zoznam mien na tablete filtrovaný bol,
+  zápis nie — `membershipId` chodí od klienta, takže tablet pobočky A sa vedel
+  podpísať pod meranie menom pracovníka pobočky B.
+- **Párovanie tabletu nemalo limit pokusov** (`0017`). Kód je jediná prekážka
+  medzi útočníkom a prevádzkou a úspešné uhádnutie navyše odpojí tablet
+  v kuchyni, takže meranie ticho prestane fungovať. Limit je per IP, ukladá
+  sa iba SHA-256 hash IP. Minimálna dĺžka vlastného kódu zvýšená na 6 znakov.
+- **Registrácia firmy bola verejný endpoint bez limitu** (`0018`) — skriptom
+  sa dal vyrobiť ľubovoľný počet firiem aj auth účtov.
+- **Rozvrh sa dal naviazať na zariadenie cudzej firmy** (`0016`).
+- **`pin_clear_attempts` neoverovala firmu** (`0018`) — admin vedel nulovať
+  počítadlo neúspešných PIN-ov cudzej firme a tým obísť ochranu proti
+  hádaniu PIN-u.
+- **Merania sa dali zapísať aj z administrácie** (`0016`). Aplikácia tak
+  merania nikdy nezapisovala (jediná cesta je kiosk cez service role), takže
+  policy bola len útočná plocha: umožňovala doplniť denník bez PIN-u
+  pracovníka. Meranie má vzniknúť pri zariadení, nie v kancelárii.
+- **Vzorce v CSV exporte.** Názvy zariadení a texty opatrení píše používateľ;
+  bunka začínajúca `=`, `+`, `-` alebo `@` sa v Exceli vyhodnotí ako vzorec
+  a spustí sa na počítači toho, kto export otvorí — spravidla vedúceho alebo
+  kontrolóra. Záporné teploty zostávajú číslami.
+- Párovací kód sa generoval cez `Math.random()`, ktorý na bezpečnostný token
+  nie je určený. Nahradené `crypto.randomInt`.
+
+### Opravené
+
+- **Limit sa v deň zmeny pravidla vyhodnocoval rozdielne v aplikácii a v DB.**
+  Aplikácia brala pravidlo ako platné do `valid_to > dnes`, databáza do
+  `valid_to >= dnes`. V deň prechodu na nový limit tak tablet mohol ukazovať
+  iný stav, než aký sa zapísal do denníka.
+- Vyhodnotenie limitu existovalo v troch kópiách (kiosk zápis, kiosk
+  vykreslenie, DB trigger). Zjednotené do `src/lib/haccp/limits.ts` krytého
+  testami; autoritatívny zostáva DB trigger.
+- 404 stránka po slovensky — Next.js dovtedy ukazoval vlastnú anglickú hlášku.
+
+### Pridané
+
+- **Testy.** Projekt dovtedy nemal žiadny test runner. Pribudol `vitest`
+  a 32 unit testov na vyhodnotenie limitov a CSV export, plus SQL regresný
+  test izolácie zápisov.
+- **`/api/health`** — overuje aj spojenie s databázou, nielen že proces beží.
+  Bez detailov o chybe v odpovedi, tie zostávajú v logu servera.
+- Indexy na cesty, ktoré rastú s prevádzkou (`0019`), predovšetkým
+  `memberships.user_id` — ním hľadá `current_tenant_id()` členstvo pri každej
+  kontrole RLS bez JWT claimu.
+- Zálohovanie, obnova a postup overenia po nasadení v `README.md`.
+
 ## [0.5.0] — 2026-08-07
 
 ### Anonymita medzi pobočkami
@@ -29,12 +213,36 @@ Formát podľa [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Pridané
 
+- **Samoregistrácia firmy** (`/registracia`, migrácia `0015`). Doteraz sa
+  nový tenant dal založiť iba ručne cez SQL — každý ďalší zákazník znamenal
+  zásah do databázy. Formulár založí naraz účet, firmu, prvú prevádzku, jej
+  tablet aj členstvo admina.
+
+  Založenie je **jedna DB funkcia, nie štyri inserty zo server action**:
+  ide o štyri závislé zápisy a zlyhanie medzi nimi by nechalo firmu bez
+  admina alebo prevádzku bez tabletu — teda účet, s ktorým sa nedá pracovať
+  a ktorý sa nedá ani zmazať cez UI. `register_tenant` je preto jedna
+  transakcia a je volateľná **výhradne service role** (`revoke ... from
+  public, anon, authenticated`) — v momente registrácie ešte neexistuje
+  členstvo, takže RLS by zápis neprepustila, a zároveň sa nesmie dať
+  zavolať anonymne cez `/rest/v1/rpc`, inak by ktokoľvek vyrábal tenantov.
+  Overené: `anon` ani `authenticated` na ňu nemajú `EXECUTE`.
+
+  Jeden účet = jedna firma; opakované odoslanie formulára by inak založilo
+  druhého tenanta a používateľ by skončil v tom, ktorý mu `current_tenant_id()`
+  vyberie ako prvý. Ak RPC zlyhá, čerstvo vytvorený auth účet sa zmaže, aby
+  sa email dal použiť znova. Existujúci email registrácia neprevezme — z
+  formulára by sa tak stal nástroj na prepísanie cudzieho hesla.
+
 - **Nová prevádzka vytvorí rovno aj svoj tablet** a vygeneruje párovací kód —
   prevádzka bez tabletu nemá ako merať a druhý krok sa ľahko zabudne.
   Kód je unikátny naprieč platformou, generátor kolíziu overuje.
 - **Premenovanie firmy z administrácie** (migrácia `0013`). Doteraz sa dalo
   zmeniť len cez SQL. Overené aj to, že cudzí účet názov zmeniť nedokáže.
 - Upozornenie v administrácii, keď firma nemá žiadnu aktívnu prevádzku.
+  Zobrazuje sa **nad** obsahom, nie namiesto neho — inak by zakrylo aj
+  formulár na stránke Prevádzky, teda jediné miesto, kde sa dá chýbajúca
+  prevádzka vytvoriť.
 
 ### Zmenené
 
