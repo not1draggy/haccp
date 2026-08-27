@@ -1,6 +1,7 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
 import { renderReport, type ReportMeranie } from '@/lib/report/pdf';
+import { denVPasme, koniecDna, zaciatokDna } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 // Vykreslenie PDF potrebuje Node API (fonty z disku), Edge runtime nestačí.
@@ -34,10 +35,12 @@ export async function GET(request: Request) {
   const fromParam = url.searchParams.get('from');
   const toParam = url.searchParams.get('to');
 
+  // Hranice sa počítajú v prevádzkovom pásme — inak by report za august
+  // začínal až o 02:00 prvého augusta a merania z nočnej zmeny vypadli.
   const from = fromParam
-    ? new Date(`${fromParam}T00:00:00`)
+    ? zaciatokDna(fromParam)
     : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-  const to = toParam ? new Date(`${toParam}T23:59:59.999`) : new Date();
+  const to = toParam ? koniecDna(toParam) : new Date();
 
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
     return new Response('Neplatné obdobie', { status: 400 });
@@ -99,9 +102,7 @@ export async function GET(request: Request) {
     orezanych: Math.max(0, (meraniaRes.count ?? merania.length) - merania.length),
   });
 
-  const nazov = `haccp-report-${from.toISOString().slice(0, 10)}_${to
-    .toISOString()
-    .slice(0, 10)}.pdf`;
+  const nazov = `haccp-report-${denVPasme(from)}_${denVPasme(to)}.pdf`;
 
   return new Response(new Uint8Array(pdf), {
     headers: {

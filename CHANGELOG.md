@@ -52,6 +52,29 @@ Kompletná kontrola: porovnané všetky tabuľky, stĺpce a funkcie produkcie pr
 migráciám; okrem vyššie uvedeného drift nie je. Všetky štyri migrácie sú
 v produkcii no-op (overené odtlačkom práv a existenciou objektov).
 
+### Opravené — revízia vlastnej práce
+
+Po zazelenaní CI som prešiel celú vetvu ešte raz. Tri nálezy, všetky
+v kóde, ktorý pribudol v tomto sprinte:
+
+- **Limit registrácie nelimitoval nič.** `rate_limit_locked_seconds` počítala
+  iba NEÚSPEŠNÉ pokusy. Pri párovaní tabletu je to správne (zneužitím je
+  hádanie kódu), pri registrácii firmy je to však presne naopak — zneužitím
+  JE úspech. Skript, ktorému každý pokus vyšiel, nezapísal ani jeden neúspech,
+  takže počítadlo zostávalo na nule. Overené na produkcii: 20 úspešných
+  registrácií z jednej IP vrátilo `locked_seconds = 0`. Opravené v `0024`,
+  regresný test je v `supabase/tests/rate_limit_test.sql` a beží v CI.
+- **Limit sa dal obísť podvrhnutou hlavičkou.** IP sa brala z ľavého konca
+  `x-forwarded-for`, ktorý pochádza od klienta — stačilo si pri každom pokuse
+  vymyslieť inú. Teraz sa uprednostňujú hlavičky, ktoré klient neovplyvní,
+  a z `x-forwarded-for` sa berie pravý koniec.
+- **„Dnešok" sa počítal v UTC.** Zobrazovanie už `Europe/Bratislava`
+  používalo, ale hranice dňa nie. Meranie o 00:30 miestneho času tak spadlo do
+  predošlého dňa a report za august začínal až o 02:00 prvého augusta —
+  merania z nočnej zmeny do neho nevošli. Pri zázname, ktorý má obstáť pri
+  kontrole, je „ktorý deň to bolo" súčasť dôkazu. Zjednotené v
+  `src/lib/haccp/cas.ts` vrátane letného aj zimného času.
+
 ### Overenie
 
 CI zelené: 22/22 E2E testov (kiosk flow, párovanie, serverové vyhodnotenie

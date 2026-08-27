@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import { headers } from 'next/headers';
 import { createServiceClient } from '@/lib/supabase/service';
+import { pickClientIp } from '@/lib/net/client-ip';
 
 /**
  * Limit pokusov pre verejné endpointy, ktoré nemajú za sebou session:
@@ -13,17 +14,9 @@ import { createServiceClient } from '@/lib/supabase/service';
  */
 export type RateLimitScope = 'pairing' | 'signup';
 
-/**
- * Bez proxy hlavičky (lokálny beh, priame volanie) padáme na spoločný kľúč.
- * Limit tým platí aj vtedy — radšej spoločný strop než žiadny.
- */
 async function clientIpHash(): Promise<string> {
   const h = await headers();
-  const ip =
-    h.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    h.get('x-real-ip')?.trim() ||
-    'unknown';
-  return createHash('sha256').update(ip).digest('hex');
+  return createHash('sha256').update(pickClientIp((n) => h.get(n))).digest('hex');
 }
 
 export type RateLimitHandle = {

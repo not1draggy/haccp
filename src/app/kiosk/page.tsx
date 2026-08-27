@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { resolveLimits } from '@/lib/haccp/limits';
 import KioskFlow, { type KioskDevice, type KioskEmployee } from './KioskFlow';
 import PairForm from './PairForm';
+import { dnesIso, jeRovnakyDen } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export default async function KioskPage() {
   }
 
   const supabase = createServiceClient();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dnesIso();
 
   const [
     { data: employeeRows },
@@ -104,9 +105,7 @@ export default async function KioskPage() {
       prevValue: prev ? Number(prev.value_c) : null,
       lastStatus: last?.status ?? null,
       lastAt: last?.measured_at ?? null,
-      measuredToday: last
-        ? new Date(last.measured_at).toDateString() === new Date().toDateString()
-        : false,
+      measuredToday: last ? jeRovnakyDen(last.measured_at) : false,
       dueToday: scheduled.has(d.id),
     };
   });

@@ -11,6 +11,7 @@ import {
 import { createServiceClient } from '@/lib/supabase/service';
 import { evaluateStatus, resolveLimits } from '@/lib/haccp/limits';
 import { checkRateLimit, lockedMinutes } from '@/lib/rate-limit';
+import { dnesIso } from '@/lib/haccp/cas';
 
 // Všetky kiosk actions bežia so service role — tenant/location scoping
 // sa preto VŽDY odvodzuje z device tokenu (getKioskSession), nikdy z klienta.
@@ -226,7 +227,7 @@ export async function submitMeasurement(input: {
   }
 
   // Aktuálne platná verzia pravidla pre daný typ zariadenia.
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dnesIso();
   const { data: rule } = await supabase
     .from('rules')
     .select('id, min_c, max_c')

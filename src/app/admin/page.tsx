@@ -1,6 +1,7 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
 import { addCorrectiveAction } from './manage-actions';
+import { denVPasme } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ function formatTime(iso: string) {
 }
 
 function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
+  return denVPasme(d);
 }
 
 function StatusBadge({ status }: { status: 'ok' | 'alarm' }) {

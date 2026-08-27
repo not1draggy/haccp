@@ -1,5 +1,6 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
+import { dnesIso } from '@/lib/haccp/cas';
 import {
   createDevice,
   createDeviceType,
@@ -31,7 +32,7 @@ export default async function DevicesPage({
 }) {
   const { msg } = await searchParams;
   const { supabase, locationId } = await getAdminScope();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = dnesIso();
 
   const [{ data: deviceRows }, { data: typeRows }, { data: ruleRows }] = await Promise.all([
     supabase

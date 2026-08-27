@@ -1,6 +1,7 @@
 import { getAdminScope } from '@/lib/admin/scope';
 import { NO_LOCATION } from '@/lib/admin/constants';
 import { CSV_BOM, csvRow } from '@/lib/export/csv';
+import { denVPasme, koniecDna, zaciatokDna } from '@/lib/haccp/cas';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,10 +40,12 @@ export async function GET(request: Request) {
   const toParam = url.searchParams.get('to');
 
   // Predvolene posledných 31 dní — bežné obdobie pre mesačnú kontrolu.
+  // Hranice sa počítajú v prevádzkovom pásme — inak by report za august
+  // začínal až o 02:00 prvého augusta a merania z nočnej zmeny vypadli.
   const from = fromParam
-    ? new Date(`${fromParam}T00:00:00`)
+    ? zaciatokDna(fromParam)
     : new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-  const to = toParam ? new Date(`${toParam}T23:59:59.999`) : new Date();
+  const to = toParam ? koniecDna(toParam) : new Date();
 
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
     return new Response('Neplatné obdobie', { status: 400 });
@@ -92,9 +95,7 @@ export async function GET(request: Request) {
     ),
   ];
 
-  const filename = `haccp-merania-${from.toISOString().slice(0, 10)}_${to
-    .toISOString()
-    .slice(0, 10)}.csv`;
+  const filename = `haccp-merania-${denVPasme(from)}_${denVPasme(to)}.csv`;
 
   return new Response(CSV_BOM + lines.join('\r\n'), {
     headers: {

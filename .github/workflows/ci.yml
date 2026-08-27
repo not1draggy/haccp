@@ -53,14 +53,21 @@ jobs:
 
       # PASS/FAIL sú v tomto skripte dáta, nie chyby SQL — bez tejto kontroly
       # by regresia v izolácii firiem prešla CI ako úspech.
-      - name: Overiť izoláciu firiem (SQL regresné testy)
+      # PASS/FAIL sú v týchto skriptoch dáta, nie chyby SQL — bez explicitnej
+      # kontroly by regresia prešla CI ako úspech.
+      # `rls_isolation_test.sql` sa zámerne nespúšťa: vyžaduje ručne doplnené
+      # UUID existujúceho tenanta, takže v čistej databáze nemá čo overovať.
+      - name: SQL regresné testy (izolácia firiem, limity pokusov)
         run: |
-          psql "$E2E_DB_URL" -v ON_ERROR_STOP=1 \
-            -f supabase/tests/write_isolation_test.sql | tee /tmp/rls.txt
-          if grep -q FAIL /tmp/rls.txt; then
-            echo "::error::Regresia v izolácii firiem"
-            exit 1
-          fi
+          for t in write_isolation_test rate_limit_test; do
+            echo "── $t"
+            psql "$E2E_DB_URL" -v ON_ERROR_STOP=1 \
+              -f "supabase/tests/$t.sql" | tee "/tmp/$t.out"
+            if grep -q FAIL "/tmp/$t.out"; then
+              echo "::error::Regresia v $t"
+              exit 1
+            fi
+          done
 
       - name: Nainštalovať prehliadač pre Playwright
         run: npx playwright install --with-deps chromium
